@@ -2,13 +2,13 @@
 mrc-level2-nlp-06 created by GitHub Classroom
 
 # 자연어학당
-나요한_T20  
-백재형_T21  
-송민재_T21  
+나요한_T2073  
+백재형_T2102  
+송민재_T2116  
 이호영_T2177  
-정찬미_T2  
-한진_T22  
-홍석진_T22  
+정찬미_T2207  
+한진_T2237  
+홍석진_T2243  
 
 # 디렉토리 구조 및 파일 요약
 
@@ -30,10 +30,6 @@ mrc-level2-nlp-06 created by GitHub Classroom
 # 설치 방법
 
 ### 요구 사항
-
-데이터 (약 51.2 MB)
-
-`tar -xzf data.tar.gz`
 
 필요한 파이썬 패키지 설치.
 
