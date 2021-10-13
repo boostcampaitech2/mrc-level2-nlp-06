@@ -26,6 +26,10 @@ class ModelArguments:
             "help": "Pretrained tokenizer name or path if not the same as model_name"
         },
     )
+    resume: bool = field(
+        default=False, 
+        metadata={"help": "resume checkout"}
+    ) 
 
 
 @dataclass
@@ -90,3 +94,4 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
+    

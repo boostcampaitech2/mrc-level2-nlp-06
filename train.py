@@ -27,28 +27,58 @@ from arguments import (
     ModelArguments,
     DataTrainingArguments,
 )
+from wandb_arguments import WandBArguments
 
-
+import wandb
+wandb.login()
 logger = logging.getLogger(__name__)
 
+from datetime import datetime
+from pytz import timezone
 
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
+    
 
     parser = HfArgumentParser(
-        (ModelArguments, DataTrainingArguments, TrainingArguments)
+        (ModelArguments, DataTrainingArguments, TrainingArguments,WandBArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args,wandb_args = parser.parse_args_into_dataclasses()
     print(model_args.model_name_or_path)
 
     # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
     # training_args.per_device_train_batch_size = 4
     # print(training_args.per_device_train_batch_size)
-
+    training_args.report_to = ["wandb"]
+    training_args.logging_setp = 100
+    
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")
+    if not wandb_args.group :
+        wandb_args.group = model_args.model_name_or_path
 
+    if not wandb_args.tags: 
+        wandb_args.tags = [wandb_args.author,model_args.model_name_or_path]
+    else:
+        wandb_args.tags.append(wandb_args.author)
+        wandb_args.tags.append(model_args.model_name_or_path)
+    
+    if model_args.model_name_or_path == "./models/train_dataset/" :
+        wandb_args.group = "eval"
+        wandb_args.tags = ["eval"]
+
+    if not wandb_args.name:
+        wandb_args.name = datetime.now(timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S')
+    wandb_args.name = wandb_args.author +"/"+wandb_args.name
+    print(f"Create {wandb_args.name} chart in wandB...")
+    print(f"WandB {wandb_args.entity}/{wandb_args.project} Project Group and tages [{wandb_args.group},{wandb_args.tags}]")
+
+    wandb.init(project=wandb_args.project,
+                entity=wandb_args.entity,
+                name=wandb_args.name,
+                tags=wandb_args.tags,
+                group=wandb_args.group)
     # logging 설정
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -    %(message)s",
@@ -331,7 +361,10 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        if model_args.resume:
+            train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        else:
+            train_result = trainer.train()
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
@@ -363,7 +396,8 @@ def run_mrc(
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
-
+    wandb.finish()
 
 if __name__ == "__main__":
     main()
+    
