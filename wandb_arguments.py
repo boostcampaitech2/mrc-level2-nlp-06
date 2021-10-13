@@ -30,7 +30,7 @@ class WandBArguments:
         },
     )
     name : Optional[str] = field(
-        default=None,
+        default=None, #None입력시 id+시간
         metadata={"help": "chart name"},
     )
     group: Optional[str] = field(
@@ -39,4 +39,12 @@ class WandBArguments:
             "help": "Group of WandB"
         },
     ) 
+    notes: Optional[str] = field(
+        default=None, 
+        metadata={
+            "help": "A longer description of the run, like a -m commit message in git. This helps you remember what you were doing when you ran this run."
+        },
+    ) 
+
+    
 

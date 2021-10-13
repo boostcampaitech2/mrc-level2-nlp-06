@@ -51,7 +51,7 @@ def main():
     # training_args.per_device_train_batch_size = 4
     # print(training_args.per_device_train_batch_size)
     training_args.report_to = ["wandb"]
-    training_args.logging_setp = 100
+    training_args.logging_setp = 200
     
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")
@@ -78,7 +78,8 @@ def main():
                 entity=wandb_args.entity,
                 name=wandb_args.name,
                 tags=wandb_args.tags,
-                group=wandb_args.group)
+                group=wandb_args.group,
+                notes=wandb_args.notes)
     # logging 설정
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -    %(message)s",
