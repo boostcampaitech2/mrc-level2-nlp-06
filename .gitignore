@@ -2,3 +2,4 @@ wandb/
 models/
 outputs/
 __pycache__/
+/wandb_arguments.py
