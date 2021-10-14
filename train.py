@@ -290,6 +290,69 @@ def run_mrc(
                 (o if sequence_ids[k] == context_index else None)
                 for k, o in enumerate(tokenized_examples["offset_mapping"][i])
             ]
+
+        ################ prepare train feature에서 가지고 온 코드 ################
+        # train의 중간 중간에 evaluation loss을 계산하기 위해서 이 부분이 필요합니다. 
+        # 나중에 적절한 시기가 되면 prepare train feature 함수의 동일한 부분과 함께 리팩토링을 수행하면 좋을 것 같습니다 :)
+
+        # token의 캐릭터 단위 position를 찾을 수 있도록 offset mapping을 사용합니다.
+        # start_positions과 end_positions을 찾는데 도움을 줄 수 있습니다.
+        offset_mapping = tokenized_examples["offset_mapping"]
+
+        # 데이터셋에 "start position", "enc position" label을 부여합니다.
+        tokenized_examples["start_positions"] = []
+        tokenized_examples["end_positions"] = []
+
+        for i, offsets in enumerate(offset_mapping):
+            input_ids = tokenized_examples["input_ids"][i]
+            cls_index = input_ids.index(tokenizer.cls_token_id)  # cls index
+
+            # sequence id를 설정합니다 (to know what is the context and what is the question).
+            sequence_ids = tokenized_examples.sequence_ids(i)
+
+            # 하나의 example이 여러개의 span을 가질 수 있습니다.
+            sample_index = sample_mapping[i]
+            answers = examples[answer_column_name][sample_index]
+
+            # answer가 없을 경우 cls_index를 answer로 설정합니다(== example에서 정답이 없는 경우 존재할 수 있음).
+            if len(answers["answer_start"]) == 0:
+                tokenized_examples["start_positions"].append(cls_index)
+                tokenized_examples["end_positions"].append(cls_index)
+            else:
+                # text에서 정답의 Start/end character index
+                start_char = answers["answer_start"][0]
+                end_char = start_char + len(answers["text"][0])
+
+                # text에서 current span의 Start token index
+                token_start_index = 0
+                while sequence_ids[token_start_index] != (1 if pad_on_right else 0):
+                    token_start_index += 1
+
+                # text에서 current span의 End token index
+                token_end_index = len(input_ids) - 1
+                while sequence_ids[token_end_index] != (1 if pad_on_right else 0):
+                    token_end_index -= 1
+
+                # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
+                if not (
+                    offsets[token_start_index][0] <= start_char
+                    and offsets[token_end_index][1] >= end_char
+                ):
+                    tokenized_examples["start_positions"].append(cls_index)
+                    tokenized_examples["end_positions"].append(cls_index)
+                else:
+                    # token_start_index 및 token_end_index를 answer의 끝으로 이동합니다.
+                    # Note: answer가 마지막 단어인 경우 last offset을 따라갈 수 있습니다(edge case).
+                    while (
+                        token_start_index < len(offsets)
+                        and offsets[token_start_index][0] <= start_char
+                    ):
+                        token_start_index += 1
+                    tokenized_examples["start_positions"].append(token_start_index - 1)
+                    while offsets[token_end_index][1] >= end_char:
+                        token_end_index -= 1
+                    tokenized_examples["end_positions"].append(token_end_index + 1)
+        ################ prepare train feature에서 가지고 온 코드 끝 ################
         return tokenized_examples
 
     if training_args.do_eval:
