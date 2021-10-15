@@ -292,13 +292,15 @@ def run_mrc(
             ]
 
         ################ prepare train feature에서 가지고 온 코드 ################
+        # 아래 코드의 역할: answer의 start position, end position을 뽑아서 eval input에게 함께 던져주기 위함이다.
         # train의 중간 중간에 evaluation loss을 계산하기 위해서 이 부분이 필요합니다. 
         # 나중에 적절한 시기가 되면 prepare train feature 함수의 동일한 부분과 함께 리팩토링을 수행하면 좋을 것 같습니다 :)
 
         # token의 캐릭터 단위 position를 찾을 수 있도록 offset mapping을 사용합니다.
         # start_positions과 end_positions을 찾는데 도움을 줄 수 있습니다.
         offset_mapping = tokenized_examples["offset_mapping"]
-
+        # 요 밑으로 함수화가 가능할 것 같아요 :)
+        # prepare train feature에서는 offset_mapping = tokenized_examples.pop("offset_mapping") 이렇게 되어 있음.
         # 데이터셋에 "start position", "enc position" label을 부여합니다.
         tokenized_examples["start_positions"] = []
         tokenized_examples["end_positions"] = []
