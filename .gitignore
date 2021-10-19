@@ -4,3 +4,5 @@ outputs/
 __pycache__/
 ./wandb_arguments.py
 wandb_arguments.py
+./eval_retriever.ipynb
+eval_retriever.ipynb
