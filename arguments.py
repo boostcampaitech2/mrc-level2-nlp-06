@@ -5,11 +5,12 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class ModelArguments:
     """
+    
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
 
     model_name_or_path: str = field(
-        default="klue/bert-base",
+        default="klue/roberta-small",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         },
@@ -42,6 +43,41 @@ class DataTrainingArguments:
         default="../data/train_dataset",
         metadata={"help": "The name of the dataset to use."},
     )
+    # output_dir: Optional[str] = field(
+    #     default="./outputs/train_dataset",
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # do_train: Optional[bool] = field(
+    #     default=True,
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # do_eval: Optional[bool] = field(
+    #     default=True,
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # evaluation_strategy: Optional[str] = field(
+    #     default="steps",
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # eval_steps: Optional[int] = field(
+    #     default=100,
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # logging_steps: Optional[int] = field(
+    #     default=100,
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+
+    # num_train_epochs: Optional[int] = field(
+    #     default=1,
+    #     metadata={"help": "The name of the dataset to use."},
+    # )
+    
     overwrite_cache: bool = field(
         default=False,
         metadata={"help": "Overwrite the cached training and evaluation sets"},

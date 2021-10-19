@@ -47,6 +47,11 @@ def main():
     model_args, data_args, training_args,wandb_args = parser.parse_args_into_dataclasses()
     print(model_args.model_name_or_path)
 
+    t_args = training_args.__dict__
+    t_args = dict(sorted(t_args.items(), key=lambda item: item[0]))
+    for k, v in t_args.items():
+        print(str(k) + ": " + str(v))
+
     # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
     # training_args.per_device_train_batch_size = 4
     # print(training_args.per_device_train_batch_size)
@@ -464,5 +469,7 @@ def run_mrc(
     wandb.finish()
 
 if __name__ == "__main__":
+    wandb.init(name="bert-baseline", tags=["bert-base", "baseline"], group="klue/bert-base")
+
     main()
     

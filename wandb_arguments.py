@@ -8,14 +8,14 @@ class WandBArguments:
     중요 : 위 eval 점수는 단순히 reader의 점수이므로 리더보드의 점수와 다릅니다.
     """
     author: str = field(
-        default="SlaveOfBooDuck",
+        default="BaekTree",
         metadata={
             "help": "(assential) identifier name"
         },
     )
     name : Optional[str] = field(
         #출력되는 이름 변경
-        default=None, #None입력시 id+시간
+        default="roberta-small", #None입력시 id+시간
         metadata={"help": "chart name"},
     )
     tags: Optional[tuple] = field(
@@ -34,7 +34,7 @@ class WandBArguments:
         },
     ) 
     group: Optional[str] = field(
-        default=None, #default가 None이면 모델이름으로 그룹이 만들어집니다.
+        default="eval metric test", #default가 None이면 모델이름으로 그룹이 만들어집니다.
         metadata={
             "help": "Group of WandB"
         },
