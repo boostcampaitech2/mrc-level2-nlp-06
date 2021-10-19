@@ -94,4 +94,8 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
+    bm25: bool = field(
+        default=True,
+        metadata={"help": "Run bm25 for default retrival"}
+    )
     
