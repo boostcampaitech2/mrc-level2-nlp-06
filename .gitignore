@@ -6,3 +6,5 @@ __pycache__/
 wandb_arguments.py
 ./eval_retriever.ipynb
 eval_retriever.ipynb
+
+.ipynb_checkpoints/
