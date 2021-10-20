@@ -50,7 +50,8 @@ class SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
-        is_bm25 = False
+        is_bm25 = False,
+        k1=1.5, b=0.75, epsilon=0.25
     ) -> NoReturn:
 
         """
@@ -99,6 +100,9 @@ class SparseRetrieval:
         # Transform by bm25
         self.bm25 = None
         self.is_bm25 = is_bm25
+        self.k1 = k1
+        self.b = b
+        self.epsilon = epsilon
 
     def get_sparse_embedding(self) -> NoReturn:
 
@@ -146,7 +150,7 @@ class SparseRetrieval:
                 tokenized_corpus = []
                 for c in self.contexts:
                     tokenized_corpus.append(self.tokenize_fn(c))
-                self.bm25 = MyBm25(tokenized_corpus)
+                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b1, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
                     pickle.dump(self.bm25, file)
                 print("bm25 pickle saved.")
@@ -256,6 +260,40 @@ class SparseRetrieval:
             cqas = pd.DataFrame(total)
             return cqas
 
+        # using parallel search, it tears the datsets to single example, which is dict type with keys
+        elif isinstance(query_or_dataset, dict):
+            # check for error in cases of wrong approach
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                doc_scores, doc_indices = self.get_relevant_doc(
+                    query_or_dataset["question"], k=topk
+                )
+            key1 = list(query_or_dataset.keys())[0]
+            assert isinstance(query_or_dataset[key1], str), "dict value is not str. Need to check if it might be a list. If so,\
+                                                            it looks like; title:[..., ...]. This may cause serious malfunctioning."
+            tmp = {
+                # Query와 해당 id를 반환합니다.
+                "question": query_or_dataset["question"],
+                "id": query_or_dataset["id"],
+                # Retrieve한 Passage의 id, context를 반환합니다.
+                "context_id": doc_indices,
+                "context": " ".join(
+                    [self.contexts[pid] for pid in doc_indices]
+                ),
+            }
+            total.append(tmp)
+
+            if "context" in query_or_dataset.keys() and "answers" in query_or_dataset.keys():
+                # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                tmp["original_context"] = query_or_dataset["context"]
+                tmp["answers"] = query_or_dataset["answers"]
+
+            cqas = pd.DataFrame(total)
+            return cqas
+        else: # Added this branch because parallel processing increases the risk of malfunctioning. 
+            raise Exception('The input is neither str, dataset, nor dict.')
+
 
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
@@ -320,7 +358,6 @@ class SparseRetrieval:
                 doc_indices.append(sorted_result.tolist()[:k])
             return doc_scores, doc_indices
         else: #bm25
-            print("This may take more than 2 mins... to tokenize all queries...")
             doc_scores = []
             doc_indices = []
             for q in queries:
@@ -328,7 +365,6 @@ class SparseRetrieval:
                 score, indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
                 doc_scores.append(score)
                 doc_indices.append(indices)
-            print("done!")
             return doc_scores, doc_indices
 
     def retrieve_faiss(
