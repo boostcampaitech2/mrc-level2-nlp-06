@@ -19,12 +19,29 @@ from datasets import (
     concatenate_datasets,
 )
 
+import rank_bm25
 
 @contextmanager
 def timer(name):
     t0 = time.time()
     yield
     print(f"[{name}] done in {time.time() - t0:.3f} s")
+
+class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 import BM250kapi"  
+                                   # and inherit BM250kapi directly, cannot save pickle.
+                                   # See https://stackoverflow.com/questions/1412787/picklingerror-cant-pickle-class-decimal-decimal-its-not-the-same-object
+    def __init__(self, corpus, tokenizer=None, k1=1.5, b=0.75, epsilon=0.25):
+            super().__init__(corpus, tokenizer=tokenizer, k1=k1, b=b, epsilon=epsilon)    
+    
+    def get_top_n(self, query, documents, n=5):
+        assert self.corpus_size == len(documents), "The documents given don't match the index corpus!"
+
+        scores = self.get_scores(query)
+
+        top_n_idx = np.argsort(scores)[::-1][:n]
+        doc_score = scores[top_n_idx]
+        
+        return doc_score, top_n_idx
 
 
 class SparseRetrieval:
@@ -33,6 +50,7 @@ class SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
+        is_bm25 = False
     ) -> NoReturn:
 
         """
@@ -52,10 +70,13 @@ class SparseRetrieval:
 
             data_path/context_path가 존재해야합니다.
 
+            is_bm25:
+                유사도 랭킹을 bm25로 할것인지 결정합니다.
+
         Summary:
             Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
         """
-
+        self.tokenize_fn = tokenize_fn
         self.data_path = data_path
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
@@ -68,13 +89,16 @@ class SparseRetrieval:
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
-            tokenizer=tokenize_fn,
+            tokenizer=self.tokenize_fn,
             ngram_range=(1, 2),
             max_features=50000,
         )
-
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
         self.indexer = None  # build_faiss()로 생성합니다.
+
+        # Transform by bm25
+        self.bm25 = None
+        self.is_bm25 = is_bm25
 
     def get_sparse_embedding(self) -> NoReturn:
 
@@ -86,26 +110,48 @@ class SparseRetrieval:
         """
 
         # Pickle을 저장합니다.
-        pickle_name = f"sparse_embedding.bin"
-        tfidfv_name = f"tfidv.bin"
-        emd_path = os.path.join(self.data_path, pickle_name)
-        tfidfv_path = os.path.join(self.data_path, tfidfv_name)
+        if not self.is_bm25: # tfidf
+            pickle_name = f"sparse_embedding.bin"
+            tfidfv_name = f"tfidv.bin"
+            emd_path = os.path.join(self.data_path, pickle_name)
+            tfidfv_path = os.path.join(self.data_path, tfidfv_name)
 
-        if os.path.isfile(emd_path) and os.path.isfile(tfidfv_path):
-            with open(emd_path, "rb") as file:
-                self.p_embedding = pickle.load(file)
-            with open(tfidfv_path, "rb") as file:
-                self.tfidfv = pickle.load(file)
-            print("Embedding pickle load.")
-        else:
-            print("Build passage embedding")
-            self.p_embedding = self.tfidfv.fit_transform(self.contexts)
-            print(self.p_embedding.shape)
-            with open(emd_path, "wb") as file:
-                pickle.dump(self.p_embedding, file)
-            with open(tfidfv_path, "wb") as file:
-                pickle.dump(self.tfidfv, file)
-            print("Embedding pickle saved.")
+            if os.path.isfile(emd_path) and os.path.isfile(tfidfv_path):
+                with open(emd_path, "rb") as file:
+                    self.p_embedding = pickle.load(file)
+                with open(tfidfv_path, "rb") as file:
+                    self.tfidfv = pickle.load(file)
+                print("Embedding pickle load.")
+            else:
+                print("Build passage embedding")
+                self.p_embedding = self.tfidfv.fit_transform(self.contexts)
+                print(self.p_embedding.shape)
+                with open(emd_path, "wb") as file:
+                    pickle.dump(self.p_embedding, file)
+                with open(tfidfv_path, "wb") as file:
+                    pickle.dump(self.tfidfv, file)
+                print("Embedding pickle saved.")
+
+        else: # bm25
+            bm25_name = f"bm25.bin"
+            bm25_path = os.path.join(self.data_path, bm25_name)
+            if os.path.isfile(bm25_path):
+                with open(bm25_path, "rb") as file:
+                    self.bm25 = pickle.load(file)
+                print("Embedding bm25 pickle load.")
+            else:
+                print("Building bm25... It may take 1 minute and 30 seconds...")
+                # bm25 must tokenizer first 
+                # because it runs pool inside and this cuases unexpected result.
+                tokenized_corpus = []
+                for c in self.contexts:
+                    tokenized_corpus.append(self.tokenize_fn(c))
+                self.bm25 = MyBm25(tokenized_corpus)
+                with open(bm25_path, "wb") as file:
+                    pickle.dump(self.bm25, file)
+                print("bm25 pickle saved.")
+
+        
 
     def build_faiss(self, num_clusters=64) -> NoReturn:
 
@@ -168,8 +214,8 @@ class SparseRetrieval:
                 Ground Truth가 없는 Query (test) -> Retrieval한 Passage만 반환합니다.
         """
 
-        assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
-
+        assert self.p_embedding is not None or self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        
         if isinstance(query_or_dataset, str):
             doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
@@ -210,6 +256,8 @@ class SparseRetrieval:
             cqas = pd.DataFrame(total)
             return cqas
 
+
+
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
         """
@@ -221,22 +269,26 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
+        if not self.is_bm25:
+            with timer("transform"):
+                query_vec = self.tfidfv.transform([query])
+            assert (
+                np.sum(query_vec) != 0
+            ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
-        with timer("transform"):
-            query_vec = self.tfidfv.transform([query])
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+            with timer("query ex search"):
+                result = query_vec * self.p_embedding.T
+            if not isinstance(result, np.ndarray):
+                result = result.toarray()
 
-        with timer("query ex search"):
-            result = query_vec * self.p_embedding.T
-        if not isinstance(result, np.ndarray):
-            result = result.toarray()
-
-        sorted_result = np.argsort(result.squeeze())[::-1]
-        doc_score = result.squeeze()[sorted_result].tolist()[:k]
-        doc_indices = sorted_result.tolist()[:k]
-        return doc_score, doc_indices
+            sorted_result = np.argsort(result.squeeze())[::-1]
+            doc_score = result.squeeze()[sorted_result].tolist()[:k]
+            doc_indices = sorted_result.tolist()[:k]
+            return doc_score, doc_indices
+        else: #bm25
+            tok_q = self.tokenize_fn(query)
+            doc_score, doc_indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
+            return doc_score, doc_indices
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -251,22 +303,33 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
+        if not self.is_bm25:
+            query_vec = self.tfidfv.transform(queries)
+            assert (
+                np.sum(query_vec) != 0
+            ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
-        query_vec = self.tfidfv.transform(queries)
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
-
-        result = query_vec * self.p_embedding.T
-        if not isinstance(result, np.ndarray):
-            result = result.toarray()
-        doc_scores = []
-        doc_indices = []
-        for i in range(result.shape[0]):
-            sorted_result = np.argsort(result[i, :])[::-1]
-            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices.append(sorted_result.tolist()[:k])
-        return doc_scores, doc_indices
+            result = query_vec * self.p_embedding.T
+            if not isinstance(result, np.ndarray):
+                result = result.toarray()
+            doc_scores = []
+            doc_indices = []
+            for i in range(result.shape[0]):
+                sorted_result = np.argsort(result[i, :])[::-1]
+                doc_scores.append(result[i, :][sorted_result].tolist()[:k])
+                doc_indices.append(sorted_result.tolist()[:k])
+            return doc_scores, doc_indices
+        else: #bm25
+            print("This may take more than 2 mins... to tokenize all queries...")
+            doc_scores = []
+            doc_indices = []
+            for q in queries:
+                tok_q = self.tokenize_fn(q) 
+                score, indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
+                doc_scores.append(score)
+                doc_indices.append(indices)
+            print("done!")
+            return doc_scores, doc_indices
 
     def retrieve_faiss(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
