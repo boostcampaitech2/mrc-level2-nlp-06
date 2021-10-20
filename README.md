@@ -1,6 +1,13 @@
 # mrc-level2-nlp-06
 mrc-level2-nlp-06 created by GitHub Classroom
 
+# inference.py의 parallel 코드
+* pathos 사용
+* 파이썬에서 병렬화를 하는 기본적인 요령
+    * 최대한 global scope에 변수와 함수가 있도록 디자인하는 것이 죠습니다
+    * 해당 코드를 활용해서 리트리버 validation을 측정하는 코드를 짜면 편합니다.
+    * serialized BM25로 유사도를 한번 구하는데 40분 -> 5분으로 단축해서 확인할 수 있어요!
+
 # 자연어학당
 나요한_T2073  
 백재형_T2102  
