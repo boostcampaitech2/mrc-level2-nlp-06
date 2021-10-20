@@ -162,12 +162,16 @@ def run_sparse_retrieval(
             datasets["validation"], topk=data_args.top_k_retrieval
         )
     else:
-        print("Calculating BM25 similarity...")
-        start = time.time()
-        df = parallel_search(datasets, data_args.top_k_retrieval)
-        # df = retriever.retrieve(datasets["validation"],topk=data_args.top_k_retrieval)
-        end = time.time()
-        print("Done! similarity processing time :%d secs "%(int(end - start)))
+        # if bm25, parallel is faster. ELSE, numpy in TFIDF outperforms the parallel. :/
+        if data_args.bm25:
+            print("Calculating BM25 similarity...")
+            start = time.time()
+            df = parallel_search(datasets, data_args.top_k_retrieval)
+            # df = retriever.retrieve(datasets["validation"],topk=data_args.top_k_retrieval)
+            end = time.time()
+            print("Done! similarity processing time :%d secs "%(int(end - start)))
+        else:
+            df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
