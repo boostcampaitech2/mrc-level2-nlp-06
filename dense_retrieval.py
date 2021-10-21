@@ -33,7 +33,7 @@ class DenseRetrieval(SparseRetrieval):
     """ SparseRetreival을 활용해, 메소드를 DenseRetrieval에 맞춰 오버라이딩
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
     """
-    def __init__(self, tokenize_fn, data_path, context_path, dataset_path):
+    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer):
         super().__init__(tokenize_fn, data_path, context_path)
         self.org_dataset = load_from_disk(dataset_path)
         self.full_ds = concatenate_datasets([
@@ -46,6 +46,8 @@ class DenseRetrieval(SparseRetrieval):
         self.p_encoder = None
         self.q_encoder = None
         self.dense_p_embedding = []
+        self.tokenizer = tokenizer
+    
     
     def get_resverse_topk_similarity(self, qeury_vec, k):
         """
@@ -192,19 +194,20 @@ class DenseRetrieval(SparseRetrieval):
         self.q_encoder.load_state_dict(torch.load(q_path))
         print("load_model finished...")
     
-
-    def get_dense_embedding(self):
-        """ p_encoder를 활용해 전체 문서에 대해 embedding 벡터를 계산합니다. 30분 소요"""
+    def get_dense_embedding(self, tokenizer):
+        """ p_encoder를 활용해 전체 문서에 대해 embedding 벡터를 계산합니다. 12분 소요"""
+        dataloader = DataLoader(self.contexts, batch_size=4, drop_last=True)
         p_embs = []
         with torch.no_grad():
             self.p_encoder.eval()
-            for p in tqdm(self.contexts):
-                p = tokenizer(p, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
-                p_emb = self.p_encoder(**p).to('cpu').numpy()
-                p_embs.append(p_emb)
-            self.dense_p_embedding = torch.Tensor(p_embs).squeeze()
+            for step, batch in enumerate(tqdm(dataloader)):
+                    batch = tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+                    p_emb = self.p_encoder(**batch)
+                    p_emb = p_emb.to('cpu').numpy()
+                    p_embs.append(p_emb)
+            self.dense_p_embedding = torch.Tensor(p_embs).reshape(-1,768)
+        torch.cuda.empty_cache()
         print("get_dense_embedding finished...")
-
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
         """ Arguments: 
@@ -217,21 +220,54 @@ class DenseRetrieval(SparseRetrieval):
         # 1. q encoder 이용 dense_q_embedding 생성
         with torch.no_grad():
             self.q_encoder.eval()
-            q_seqs_val = tokenizer([query], padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+            q_seqs_val = self.tokenizer([query], padding="max_length", truncation=True, return_tensors='pt').to('cuda')
             q_emb = self.q_encoder(**q_seqs_val).to('cpu')  #(num_query, emb_dim)
-        print('p_embs.size:', self.dense_p_embedding.size(), 'q_emb.size: ', q_emb.size())
 
         # 2. 생성된 embedding에 dot product를 수행 => Document들의 similarity ranking을 구함
         dot_prod_scores = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))
         rank = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()
-        print('dot_prod_scores: ', dot_prod_scores)
-        print('rank: ',rank)
+        #print('dot_prod_scores: ', dot_prod_scores)
+        #print('rank: ',rank)
+        torch.cuda.empty_cache()
         return dot_prod_scores[0], rank
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1) -> Tuple[List, List]:
         """ 메소드 오버라이딩. Dataset형태로 queries가 들어오는 경우 수행 구현 필요"""
-        return super().get_relevant_doc_bulk(queries, k=k)
+        dataloader = DataLoader(queries, batch_size=4)
+        result = []
+        with torch.no_grad():
+            self.q_encoder.eval()
+            for batch in tqdm(dataloader):    
+                q_seqs_val = self.tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+                q_emb = self.q_encoder(**q_seqs_val).to('cpu')            
+                res = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))#.numpy() # 32, 56000
+                result.append(res.tolist()) # [batch_size, 32, 56000]
 
+        if not isinstance(result, np.ndarray):
+                result = np.array(result)#.toarray()
+        result = result.reshape((-1, self.dense_p_embedding.size(0)))
+
+        doc_scores = []
+        doc_indices = []
+        for i in range(result.shape[0]):
+            sorted_result = np.argsort(result[i, :])[::-1]
+            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
+            doc_indices.append(sorted_result.tolist()[:k])
+
+        torch.cuda.empty_cache()
+        return doc_scores, doc_indices
+
+    def topk_experiment(self, topK_list, dataset):
+        """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
+        result_dict = {}
+        for topK in tqdm(topK_list):
+            result_retriever = self.retrieve(dataset, topk=topK)
+            correct = 0
+            for index in tqdm(range(len(result_retriever)), desc="topk_experiment"):
+                if  result_retriever['original_context'][index][:200] in result_retriever['context'][index]:
+                    correct += 1
+            result_dict[topK] = correct/len(result_retriever)
+        return result_dict
 
 if __name__=="__main__":
     data_path  = "../data/"
@@ -246,12 +282,12 @@ if __name__=="__main__":
         ])
 
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint,use_fast=False,)
-    dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, context_path = context_path, dataset_path=dataset_path)
+    dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, context_path = context_path, dataset_path=dataset_path, tokenizer=tokenizer)
 
     args = TrainingArguments(
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
-        learning_rate=1e-4,
+        learning_rate=2e-5,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
         num_train_epochs=30,
@@ -262,10 +298,16 @@ if __name__=="__main__":
     #dense_retriever.init_model(model_checkpoint)
     #dense_retriever.train(args, train_dataset)
 
-    ## 추론과정 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_29.pt", "outputs/q_encoder_29.pt")
+    ## 추론준비 ##
+    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_15.pt", "outputs/q_encoder_15.pt")
     dense_retriever.get_dense_embedding()
+
+    ## 추론 ##
     for i in range(10):
-        df = dense_retriever.retrieve(full_ds[0]['question'], topk=3)
-    #print(df)
-    
+        df = dense_retriever.retrieve(full_ds[i]['question'], topk=3)
+        print(df)
+
+    ## topk 출력 ##
+    topK_list = [1,10,20]
+    result = dense_retriever.topk_experiment(topK_list, org_dataset["validation"])
+    print(result)
