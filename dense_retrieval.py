@@ -178,14 +178,16 @@ class DenseRetrieval(SparseRetrieval):
                 global_step += 1
                 torch.cuda.empty_cache()
 
-            torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pth")
-            torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pth")
+            torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pt")
+            torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pt")
         return self.p_encoder, self.q_encoder
 
     def load_model(self, model_checkpoint, p_path, q_path):
         """ 학습이 완료된 p, q_encoder를 불러옵니다."""
-        self.p_encoder = BertEncoder.from_pretrained(model_checkpoint).cuda()
-        self.q_encoder = BertEncoder.from_pretrained(model_checkpoint).cuda()
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(device)
+        self.p_encoder = BertEncoder.from_pretrained(model_checkpoint).to(device)
+        self.q_encoder = BertEncoder.from_pretrained(model_checkpoint).to(device)
         self.p_encoder.load_state_dict(torch.load(p_path))
         self.q_encoder.load_state_dict(torch.load(q_path))
         print("load_model finished...")
@@ -252,17 +254,18 @@ if __name__=="__main__":
         learning_rate=1e-4,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=1,
+        num_train_epochs=30,
         weight_decay=0.01,
     )
     ## 학습과정 ##
-    #train_dataset = detnse_retriever.make_train_data(tokenizer)
+    #train_dataset = dense_retriever.make_train_data(tokenizer)
     #dense_retriever.init_model(model_checkpoint)
     #dense_retriever.train(args, train_dataset)
 
     ## 추론과정 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_0.pt", "outputs/q_encoder_0.pt")
+    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_29.pt", "outputs/q_encoder_29.pt")
     dense_retriever.get_dense_embedding()
-    df = dense_retriever.retrieve(full_ds[0]['question'], topk=3)
-    print(df)
+    for i in range(10):
+        df = dense_retriever.retrieve(full_ds[0]['question'], topk=3)
+    #print(df)
     
