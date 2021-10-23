@@ -48,7 +48,20 @@ class DenseRetrieval(SparseRetrieval):
         self.dense_p_embedding = []
         self.tokenizer = tokenizer
     
-    
+    def get_topk_similarity(self, qeury_vec, k):
+        result = qeury_vec * self.p_embedding.T
+        result = result.toarray()
+
+        doc_scores3 = np.partition(result, -k)[:, -k:][:, ::-1]
+        ind = np.argsort(doc_scores3, axis=-1)[:, ::-1]
+        doc_scores3 = np.sort(doc_scores3, axis=-1)[:, ::-1]
+        doc_indices3 = np.argpartition(result, -k)[:, -k:][:, ::-1]
+        r, c = ind.shape
+        ind = ind + np.tile(np.arange(r).reshape(-1, 1), (1, c)) * c
+        doc_indices3 = doc_indices3.ravel()[ind].reshape(r, c)
+
+        return doc_scores3, doc_indices3
+
     def get_resverse_topk_similarity(self, qeury_vec, k):
         """
         Arguments: 
@@ -70,13 +83,20 @@ class DenseRetrieval(SparseRetrieval):
 
         return doc_scores3, doc_indices3
 
-    def make_train_data(self, tokenizer):
+    def make_train_data(self, tokenizer, data):
         """ Note: Dense Embedding학습을 하기 위한 데이터셋을 만듭니다. """
         print("make_train_data...")
         corpus = np.array(self.contexts)
         query_vec = self.tfidfv.transform(self.full_ds['context'])
-        doc_scores, doc_indices = self.get_resverse_topk_similarity(query_vec, self.num_neg)
-        neg_idxs = doc_indices
+        doc_scores, doc_indices = self.get_topk_similarity(query_vec, self.num_neg*10)
+        neg_idxs = []
+        for idx, ind in enumerate(tqdm(doc_indices)): # 4000
+            neg_idx = []
+            for i in range(len(ind)): # k=4
+                if not self.contexts[ind[i]][:200] in self.full_ds['context'][idx]:
+                    neg_idx.append(ind[i])
+                if len(neg_idx)==self.num_neg: break
+            neg_idxs.append(neg_idx)
 
         for idx, c in enumerate(tqdm(self.full_ds['context'])):
             p_neg = corpus[neg_idxs[idx]]
@@ -98,7 +118,7 @@ class DenseRetrieval(SparseRetrieval):
 
         print(p_seqs['input_ids'].size())  #(num_example, pos + neg, max_len)
         train_dataset = TensorDataset(p_seqs['input_ids'], p_seqs['attention_mask'], p_seqs['token_type_ids'], 
-                                q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids'])
+                                q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids'])                
         return train_dataset
 
     def init_model(self, model_checkpoint):
@@ -194,14 +214,14 @@ class DenseRetrieval(SparseRetrieval):
         self.q_encoder.load_state_dict(torch.load(q_path))
         print("load_model finished...")
     
-    def get_dense_embedding(self, tokenizer):
+    def get_dense_embedding(self):
         """ p_encoder를 활용해 전체 문서에 대해 embedding 벡터를 계산합니다. 12분 소요"""
         dataloader = DataLoader(self.contexts, batch_size=4, drop_last=True)
         p_embs = []
         with torch.no_grad():
             self.p_encoder.eval()
             for step, batch in enumerate(tqdm(dataloader)):
-                    batch = tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+                    batch = self.tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
                     p_emb = self.p_encoder(**batch)
                     p_emb = p_emb.to('cpu').numpy()
                     p_embs.append(p_emb)
@@ -294,12 +314,12 @@ if __name__=="__main__":
         weight_decay=0.01,
     )
     ## 학습과정 ##
-    #train_dataset = dense_retriever.make_train_data(tokenizer)
-    #dense_retriever.init_model(model_checkpoint)
-    #dense_retriever.train(args, train_dataset)
+    # train_dataset = dense_retriever.make_train_data(tokenizer)
+    # dense_retriever.init_model(model_checkpoint)
+    # dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_15.pt", "outputs/q_encoder_15.pt")
+    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_1.pt", "outputs/q_encoder_1.pt")
     dense_retriever.get_dense_embedding()
 
     ## 추론 ##
