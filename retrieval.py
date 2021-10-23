@@ -150,7 +150,7 @@ class SparseRetrieval:
                 tokenized_corpus = []
                 for c in self.contexts:
                     tokenized_corpus.append(self.tokenize_fn(c))
-                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b1, epsilon=self.epsilon)
+                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
                     pickle.dump(self.bm25, file)
                 print("bm25 pickle saved.")
