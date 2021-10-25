@@ -4,3 +4,6 @@ outputs/
 __pycache__/
 ./wandb_arguments.py
 wandb_arguments.py
+*.bin
+*.pt
+*.json

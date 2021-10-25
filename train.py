@@ -50,6 +50,7 @@ def main():
     # training_args.per_device_train_batch_size = 4
     # print(training_args.per_device_train_batch_size)
     training_args.report_to = ["wandb"]    
+    data_args.use_augment=3
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")    
     wandb_args= wandb_args_init(wandb_args, model_args)
