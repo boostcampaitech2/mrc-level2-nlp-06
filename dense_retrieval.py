@@ -32,6 +32,7 @@ class BertEncoder(BertPreTrainedModel):
 class DenseRetrieval(SparseRetrieval):
     """ SparseRetreival을 활용해, 메소드를 DenseRetrieval에 맞춰 오버라이딩
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
+        arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
     def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data):
         super().__init__(tokenize_fn, data_path, context_path)
@@ -181,7 +182,7 @@ class DenseRetrieval(SparseRetrieval):
                 q_outputs = self.q_encoder(**q_inputs)  #(batch_size*, emb_dim)
 
                 # Calculate similarity score & loss
-                p_outputs = p_outputs.view(args.per_device_train_batch_size, -1, self.num_neg+1)
+                p_outputs = torch.transpose(p_outputs.view(args.per_device_train_batch_size, self.num_neg+1, -1), 1, 2)
                 q_outputs = q_outputs.view(args.per_device_train_batch_size, 1, -1)
 
                 sim_scores = torch.bmm(q_outputs, p_outputs).squeeze()  #(batch_size, self.num_neg+1)
@@ -408,7 +409,7 @@ if __name__=="__main__":
         learning_rate=2e-5,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=1,
+        num_train_epochs=5,
         weight_decay=0.01,
     )
 
@@ -418,7 +419,7 @@ if __name__=="__main__":
     dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_0.pt", "outputs/q_encoder_0.pt")
+    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_4.pt", "outputs/q_encoder_4.pt")
     dense_retriever.get_dense_embedding()
 
     ## 추론 ##
