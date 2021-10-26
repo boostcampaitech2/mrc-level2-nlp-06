@@ -139,7 +139,7 @@ def run_mrc(
     post_processing_function = post_processing_fuction_with_setting(data_args, datasets["validation"], answer_column_name)
     # Trainer 초기화
     train_dataset = dataset_list[0] if training_args.do_train else None
-    eval_dataset = dataset_list[1] if training_args.do_eval else None
+    eval_dataset = dataset_list[0] if training_args.do_eval else None
     trainer = QuestionAnsweringTrainer( 
         model=model,
         args=training_args,

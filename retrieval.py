@@ -5,10 +5,12 @@ import faiss
 import pickle
 import numpy as np
 import pandas as pd
+import re
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
 from typing import List, Tuple, NoReturn, Any, Optional, Union
+from utils.preprocess import wiki_preprocess
 
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -33,7 +35,7 @@ class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 im
     def __init__(self, corpus, tokenizer=None, k1=1.5, b=0.75, epsilon=0.25):
             super().__init__(corpus, tokenizer=tokenizer, k1=k1, b=b, epsilon=epsilon)    
     
-    def get_top_n(self, query, documents, n=5):
+    def get_top_n(self, query, documents, n=20):
         assert self.corpus_size == len(documents), "The documents given don't match the index corpus!"
 
         scores = self.get_scores(query)
@@ -49,7 +51,7 @@ class SparseRetrieval:
         self,
         tokenize_fn,
         data_path: Optional[str] = "../data/",
-        context_path: Optional[str] = "wikipedia_documents.json",
+        context_path: Optional[str] = "mod_wiki.json",
         is_bm25 = False,
         k1=1.5, b=0.75, epsilon=0.25
     ) -> NoReturn:
@@ -79,8 +81,22 @@ class SparseRetrieval:
         """
         self.tokenize_fn = tokenize_fn
         self.data_path = data_path
+        
+
+        # wiki data 전처리한 파일 만들기
+        if not os.path.isfile("/opt/ml/data/mod_wiki.json") :
+            with open("/opt/ml/data/wikipedia_documents.json", "r") as f:
+                wiki = json.load(f)
+            new_wiki = dict()
+            for ids in range(len(wiki)):
+                new_wiki[str(ids)] = wiki_preprocess(wiki[str(ids)])
+
+            with open('/opt/ml/data/mod_wiki.json', 'w', encoding='utf-8') as make_file:
+                json.dump(new_wiki, make_file, indent="\t", ensure_ascii=False)
+        
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
+
 
         self.contexts = list(
             dict.fromkeys([v["text"] for v in wiki.values()])
@@ -150,7 +166,7 @@ class SparseRetrieval:
                 tokenized_corpus = []
                 for c in self.contexts:
                     tokenized_corpus.append(self.tokenize_fn(c))
-                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b1, epsilon=self.epsilon)
+                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
                     pickle.dump(self.bm25, file)
                 print("bm25 pickle saved.")

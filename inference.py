@@ -16,7 +16,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
 import time
 import numpy as np
-
+import json
 from datasets import (
     load_metric,
     load_from_disk,
@@ -40,6 +40,8 @@ from transformers import (
 from utils_qa import postprocess_qa_predictions, check_no_error
 from trainer_qa import QuestionAnsweringTrainer
 from retrieval import SparseRetrieval
+from utils.preprocess import wiki_preprocess
+
 
 from arguments import (
     ModelArguments,
@@ -155,7 +157,7 @@ def run_sparse_retrieval(
         tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25
     )
     retriever.get_sparse_embedding()
-
+    
     if data_args.use_faiss:
         retriever.build_faiss(num_clusters=data_args.num_clusters)
         df = retriever.retrieve_faiss(
