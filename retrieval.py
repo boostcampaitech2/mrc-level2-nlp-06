@@ -45,7 +45,8 @@ class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 im
         
         return doc_score, top_n_idx
 
-
+# 전처리한 데이터를 바로 불러오게 mod_wiki로 바꿨습니다.
+# mod_wiki가 없으면 생성하도록 코드를 만들어놨습니다.
 class SparseRetrieval:
     def __init__(
         self,
@@ -83,16 +84,18 @@ class SparseRetrieval:
         self.data_path = data_path
         
 
-        # wiki data 전처리한 파일 만들기
+        # wiki data 전처리한 파일이 없으면 만들기
         if not os.path.isfile("/opt/ml/data/mod_wiki.json") :
             with open("/opt/ml/data/wikipedia_documents.json", "r") as f:
                 wiki = json.load(f)
-            new_wiki = dict()
+            wiki_dict = dict()
             for ids in range(len(wiki)):
-                new_wiki[str(ids)] = wiki_preprocess(wiki[str(ids)])
+                # 인덱스 번호가 string type
+                wiki_dict[str(ids)] = wiki_preprocess(wiki[str(ids)])
 
-            with open('/opt/ml/data/mod_wiki.json', 'w', encoding='utf-8') as make_file:
-                json.dump(new_wiki, make_file, indent="\t", ensure_ascii=False)
+            # 중복 제거는 하지 않았습니다. 이거 때문에 자꾸 오류가 나버리는 것 같아서요(성능에는 지장이 없습니다.)
+            with open('/opt/ml/data/mod_wiki.json', 'w', encoding='utf-8') as mf:
+                json.dump(wiki_dict, mf, indent="\t", ensure_ascii=False)
         
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)

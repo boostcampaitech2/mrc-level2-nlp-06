@@ -16,7 +16,6 @@ from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
 import time
 import numpy as np
-import json
 from datasets import (
     load_metric,
     load_from_disk,
@@ -40,8 +39,6 @@ from transformers import (
 from utils_qa import postprocess_qa_predictions, check_no_error
 from trainer_qa import QuestionAnsweringTrainer
 from retrieval import SparseRetrieval
-from utils.preprocess import wiki_preprocess
-
 
 from arguments import (
     ModelArguments,
