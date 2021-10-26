@@ -5,7 +5,6 @@ import faiss
 import pickle
 import numpy as np
 import pandas as pd
-import re
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
