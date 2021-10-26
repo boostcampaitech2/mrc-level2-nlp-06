@@ -82,7 +82,6 @@ class SparseRetrieval:
         self.tokenize_fn = tokenize_fn
         self.data_path = data_path
         
-
         # wiki data 전처리한 파일이 없으면 만들기
         if not os.path.isfile("/opt/ml/data/mod_wiki.json") :
             with open("/opt/ml/data/wikipedia_documents.json", "r") as f:
