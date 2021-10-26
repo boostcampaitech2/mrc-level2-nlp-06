@@ -46,7 +46,7 @@ class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 im
         return doc_score, top_n_idx
 
 # 전처리한 데이터를 바로 불러오게 mod_wiki로 바꿨습니다.
-# mod_wiki가 없으면 생성하도록 코드를 만들어놨습니다.
+# mod_wiki가 없으면 생성하도록 코드를 만들었습니다.
 class SparseRetrieval:
     def __init__(
         self,
