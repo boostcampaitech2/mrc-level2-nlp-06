@@ -145,7 +145,7 @@ def run_sparse_retrieval(
     training_args: TrainingArguments,
     data_args: DataTrainingArguments,
     data_path: str = "../data",
-    context_path: str = "wikipedia_documents.json",
+    context_path: str = "mod_wiki.json",
 ) -> DatasetDict:
 
     # use global retriever for multi processing for BM25 

@@ -35,7 +35,7 @@ class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 im
             super().__init__(corpus, tokenizer=tokenizer, k1=k1, b=b, epsilon=epsilon)    
     
     def get_top_n(self, query, documents, n=20):
-        assert self.corpus_size == len(documents), "The documents given don't match the index corpus!"
+        assert self.corpus_size == len(documents), "The documents given don't match the index corpus! needs to remove bm25.bin"
 
         scores = self.get_scores(query)
 
@@ -92,14 +92,13 @@ class SparseRetrieval:
                 # 인덱스 번호가 string type
                 wiki_dict[str(ids)] = wiki_preprocess(wiki[str(ids)])
 
-            # 중복 제거는 하지 않았습니다. 이거 때문에 자꾸 오류가 나버리는 것 같아서요(성능에는 지장이 없습니다.)
             with open('/opt/ml/data/mod_wiki.json', 'w', encoding='utf-8') as mf:
                 json.dump(wiki_dict, mf, indent="\t", ensure_ascii=False)
         
-        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+        with open(os.path.join(self.data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
 
-
+        # 중복 제거
         self.contexts = list(
             dict.fromkeys([v["text"] for v in wiki.values()])
         )  # set 은 매번 순서가 바뀌므로
