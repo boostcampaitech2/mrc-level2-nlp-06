@@ -2,6 +2,7 @@ wandb/
 models/
 outputs/
 __pycache__/
+data/
 ./wandb_arguments.py
 wandb_arguments.py
 ./eval_retriever.ipynb

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pickle
 from tqdm import tqdm, trange
 from typing import List, Tuple, NoReturn, Any, Optional, Union
 
@@ -84,6 +85,7 @@ class DenseRetrieval(SparseRetrieval):
     def make_train_data(self, tokenizer):
         """ Note: Dense Embedding학습을 하기 위한 데이터셋을 만듭니다. """
         print("make_train_data...")
+
         corpus = np.array(self.contexts)
         query_vec = self.tfidfv.transform(self.train_data['context'])
         doc_scores, doc_indices = self.get_topk_similarity(query_vec, self.num_neg*10)
@@ -119,8 +121,17 @@ class DenseRetrieval(SparseRetrieval):
         print(p_seqs['input_ids'].size())  #(num_example, pos + neg, max_len)
         train_dataset = TensorDataset(p_seqs['input_ids'], p_seqs['attention_mask'], p_seqs['token_type_ids'], 
                                 q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids'])                
+        
+        with open('dense_train_data.pickle', "wb") as f:
+            pickle.dump(train_dataset, f)
         return train_dataset
 
+    def load_train_data(self):
+        """미리 생성된 Dense Embedding 모델학습용 데이터를 불러옵니다."""
+        with open("dense_train_data.pickle", "rb") as f:
+            train_dataset = pickle.load(f)
+        return train_dataset
+        
     def init_model(self, model_checkpoint):
         """ Encoder 모델을 생성해 줍니다."""
         print("init_model...")
@@ -216,7 +227,7 @@ class DenseRetrieval(SparseRetrieval):
     
     def get_dense_embedding(self):
         """ p_encoder를 활용해 전체 문서에 대해 embedding 벡터를 계산합니다. 12분 소요"""
-        dataloader = DataLoader(self.train_data['context'], batch_size=4, drop_last=True)
+        dataloader = DataLoader(self.contexts, batch_size=4, drop_last=True)
         p_embs = []
         with torch.no_grad():
             self.p_encoder.eval()
@@ -226,6 +237,10 @@ class DenseRetrieval(SparseRetrieval):
                     p_emb = p_emb.to('cpu').numpy()
                     p_embs.append(p_emb)
             self.dense_p_embedding = torch.Tensor(p_embs).reshape(-1,768)
+
+        with open("./data/dense_embedding.bin", "wb") as f:
+            pickle.dump(self.dense_p_embedding, f)
+
         torch.cuda.empty_cache()
         print("get_dense_embedding finished...")
 
@@ -245,11 +260,10 @@ class DenseRetrieval(SparseRetrieval):
 
         # 2. 생성된 embedding에 dot product를 수행 => Document들의 similarity ranking을 구함
         dot_prod_scores = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))
-        rank = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()
-        #print('dot_prod_scores: ', dot_prod_scores)
-        #print('rank: ',rank)
+        indices = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()[:k]
+        score = dot_prod_scores.squeeze()[indices].tolist()[:k]
         torch.cuda.empty_cache()
-        return dot_prod_scores[0], rank
+        return score, indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1) -> Tuple[List, List]:
         """ 메소드 오버라이딩. Dataset형태로 queries가 들어오는 경우 수행 구현 필요"""
@@ -257,7 +271,7 @@ class DenseRetrieval(SparseRetrieval):
         result = []
         with torch.no_grad():
             self.q_encoder.eval()
-            for batch in tqdm(dataloader):    
+            for batch in tqdm(dataloader):
                 q_seqs_val = self.tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
                 q_emb = self.q_encoder(**q_seqs_val).to('cpu')            
                 res = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))#.numpy() # 32, 56000
@@ -277,102 +291,6 @@ class DenseRetrieval(SparseRetrieval):
         torch.cuda.empty_cache()
         return doc_scores, doc_indices
 
-    def retrieve(self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1) -> Union[Tuple[List, List], pd.DataFrame]:
-        """
-        Arguments:
-            query_or_dataset (Union[str, Dataset]):
-                str이나 Dataset으로 이루어진 Query를 받습니다.
-                str 형태인 하나의 query만 받으면 `get_relevant_doc`을 통해 유사도를 구합니다.
-                Dataset 형태는 query를 포함한 HF.Dataset을 받습니다.
-                이 경우 `get_relevant_doc_bulk`를 통해 유사도를 구합니다.
-            topk (Optional[int], optional): Defaults to 1.
-                상위 몇 개의 passage를 사용할 것인지 지정합니다.
-
-        Returns:
-            1개의 Query를 받는 경우  -> Tuple(List, List)
-            다수의 Query를 받는 경우 -> pd.DataFrame: [description]
-
-        Note:
-            다수의 Query를 받는 경우,
-                Ground Truth가 있는 Query (train/valid) -> 기존 Ground Truth Passage를 같이 반환합니다.
-                Ground Truth가 없는 Query (test) -> Retrieval한 Passage만 반환합니다.
-        """
-
-        assert self.p_embedding is not None or self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
-        
-        if isinstance(query_or_dataset, str):
-            doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
-            print("[Search query]\n", query_or_dataset, "\n")
-
-            for i in range(topk):
-                print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
-                print(self.train_data['context'][doc_indices[i]])
-
-            return (doc_scores, [self.train_data['context'][doc_indices[i]] for i in range(topk)])
-
-        elif isinstance(query_or_dataset, Dataset):
-            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
-            total = []
-            with timer("query exhaustive search"):
-                doc_scores, doc_indices = self.get_relevant_doc_bulk(
-                    query_or_dataset["question"], k=topk
-                )
-            for idx, example in enumerate(
-                tqdm(query_or_dataset, desc="Sparse retrieval: ")
-            ):
-                tmp = {
-                    # Query와 해당 id를 반환합니다.
-                    "question": example["question"],
-                    "id": example["id"],
-                    # Retrieve한 Passage의 id, context를 반환합니다.
-                    "context_id": doc_indices[idx],
-                    "context": " ".join(
-                        [self.train_data['context'][pid] for pid in doc_indices[idx]]
-                    ),
-                }
-                if "context" in example.keys() and "answers" in example.keys():
-                    # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
-                    tmp["original_context"] = example["context"]
-                    tmp["answers"] = example["answers"]
-                total.append(tmp)
-
-            cqas = pd.DataFrame(total)
-            return cqas
-
-        # using parallel search, it tears the datsets to single example, which is dict type with keys
-        elif isinstance(query_or_dataset, dict):
-            # check for error in cases of wrong approach
-            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
-            total = []
-            with timer("query exhaustive search"):
-                doc_scores, doc_indices = self.get_relevant_doc(
-                    query_or_dataset["question"], k=topk
-                )
-            key1 = list(query_or_dataset.keys())[0]
-            assert isinstance(query_or_dataset[key1], str), "dict value is not str. Need to check if it might be a list. If so,\
-                                                            it looks like; title:[..., ...]. This may cause serious malfunctioning."
-            tmp = {
-                # Query와 해당 id를 반환합니다.
-                "question": query_or_dataset["question"],
-                "id": query_or_dataset["id"],
-                # Retrieve한 Passage의 id, context를 반환합니다.
-                "context_id": doc_indices,
-                "context": " ".join(
-                    [self.contexts[pid] for pid in doc_indices]
-                ),
-            }
-            total.append(tmp)
-
-            if "context" in query_or_dataset.keys() and "answers" in query_or_dataset.keys():
-                # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
-                tmp["original_context"] = query_or_dataset["context"]
-                tmp["answers"] = query_or_dataset["answers"]
-
-            cqas = pd.DataFrame(total)
-            return cqas
-        else: # Added this branch because parallel processing increases the risk of malfunctioning. 
-            raise Exception('The input is neither str, dataset, nor dict.')
-        
 
     def topk_experiment(self, topK_list, dataset):
         """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
@@ -401,26 +319,29 @@ if __name__=="__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint,use_fast=False,)
     dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, 
                                     context_path = context_path, dataset_path=dataset_path, 
-                                    tokenizer=tokenizer, train_data=org_dataset["validation"])
+                                    tokenizer=tokenizer, train_data=org_dataset['train'])
 
     args = TrainingArguments(
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
-        learning_rate=2e-5,
+        learning_rate=1e-5,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=5,
+        num_train_epochs=40,
         weight_decay=0.01,
     )
 
     ## 학습과정 ##
-    train_dataset = dense_retriever.make_train_data(tokenizer)
-    dense_retriever.init_model(model_checkpoint)
-    dense_retriever.train(args, train_dataset)
+    # # train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
+    # train_dataset = dense_retriever.load_train_data()
+    # dense_retriever.init_model(model_checkpoint)
+    # dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_4.pt", "outputs/q_encoder_4.pt")
-    dense_retriever.get_dense_embedding()
+    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_5.pt", "outputs/q_encoder_5.pt")
+    #dense_retriever.get_dense_embedding()
+    with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
+        dense_retriever.dense_p_embedding = pickle.load(f)
 
     ## 추론 ##
     for i in range(10):
@@ -429,5 +350,5 @@ if __name__=="__main__":
 
     ## topk 출력 ##
     topK_list = [1,10,20]
-    result = dense_retriever.topk_experiment(topK_list, org_dataset["validation"])
+    result = dense_retriever.topk_experiment(topK_list, org_dataset['train'])
     print(result)
