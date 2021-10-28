@@ -73,12 +73,15 @@ except:
 es = Elasticsearch()
 
 INDEX_NAME = "toy_index"
+from retrieval import SparseRetrieval
 
 @contextmanager
 def timer(name):
     t0 = time.time()
     yield
     print(f"[{name}] done in {time.time() - t0:.3f} s")
+
+SEED = 42
 
 # 난수 고정
 def set_seed(random_seed):
@@ -220,7 +223,9 @@ class DenseRetrieval:
         p_encoder = None,
         q_encoder = None,
         prediction_only = False,
-        pre_encode_psg = None
+        pre_encode_psg = None,
+        hard_negative = False,
+        gradient_accumulation_batch = False
     ):
         """
         Arguments:
@@ -245,18 +250,21 @@ class DenseRetrieval:
             학습과 추론에 필요한 객체들을 받아서 속성으로 저장합니다.
             객체가 instantiate될 때 in-batch negative가 생긴 데이터를 만들도록 함수를 수행합니다.
         """
+        # self.gradient_accumulation_batch = gradient_accumulation_batch
+        self.hard_negative = hard_negative
         if pre_encode_psg:
             self.emb_file = pre_encode_psg
         self.num_neg = num_neg
         self.data_path = data_path
-        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+        self.context_path = context_path
+        with open(os.path.join(data_path, self.context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
 
-        self.contexts = list(
+        self.wiki_contexts = list(
             dict.fromkeys([v["text"] for v in wiki.values()])
         )  # set 은 매번 순서가 바뀌므로
-        # print(f"Lengths of unique contexts : {len(self.contexts)}")
-        self.ids = list(range(len(self.contexts)))
+        # print(f"Lengths of unique contexts : {len(self.wiki_contexts)}")
+        self.ids = list(range(len(self.wiki_contexts)))
 
 
         self.tokenizer = tokenizer
@@ -270,10 +278,136 @@ class DenseRetrieval:
             self.p_encoder = p_encoder.to(args.device)
         self.q_encoder = q_encoder.to(args.device)
         self.dataloader = None
-        if not prediction_only:
-            self.prepare_in_batch_negative(num_neg=num_neg)
+        self.num_hard_neg = 1
+        # if not prediction_only:
+        if hard_negative:
+            self.prepare_in_batch_and_hard()
+        else:
+            self.prepare_in_batch_negative()
 
         self.p_emb = None
+
+    def prepare_in_batch_and_hard(self,
+        dataset = None,
+        tokenizer=None
+        ):
+            """
+            Arguments:
+                dataset (datasets.Dataset, default=None):
+                    Huggingface의 Dataset을 받아오면,
+                    in-batch negative를 추가해서 Dataloader를 만들어주세요.
+                num_neg (int, default=2):
+                    In-batch negative 수행시 사용할 negative sample의 수를 받아옵니다.
+                tokenizer (Callable, default=None):
+                    Tokenize할 함수를 받아옵니다.
+                    별도로 받아오지 않으면 속성으로 저장된 Tokenizer를 불러올 수 있게 짜주세요.
+
+            Note:
+                모든 Arguments는 사실 이 클래스의 속성으로 보관되어 있기 때문에
+                별도로 Argument를 직접 받지 않아도 수행할 수 있게 만들어주세요.
+            """
+            if dataset is None:
+                dataset = self.dataset
+            if tokenizer is None:
+                tokenizer = self.tokenizer
+
+            context = dataset['context']
+            queries = dataset['question']
+
+            # shuffle
+            rand_idx = np.random.choice(len(context), len(context))
+            context = np.array(context)[rand_idx]
+            queries = np.array(queries)[rand_idx]
+
+            # global SEED
+            # if SEED == 42 and os.path.isfile("./p_with_neg.pt"):
+            #     p_with_neg = torch.load("./p_with_neg.pt")
+            #     print("loading preprecessed file...")
+
+                
+            # else:
+
+            retriever = SparseRetrieval(
+                tokenize_fn=tokenizer.tokenize, data_path=self.data_path, context_path=self.context_path, is_bm25=True
+            )
+            retriever.get_sparse_embedding()
+
+
+
+            # 1. 배치 나누기.
+            batch_size = self.args.per_device_train_batch_size
+            print("total number of train context : ", len(context))
+            num_mini_batch = ( len(context) // batch_size ) + 1
+            print("num_mini_batch: ", num_mini_batch)
+            total = 0
+            p_with_neg = []
+            start = time.time()
+            print("creating the hard negative examples...")
+            for i in tqdm(range(num_mini_batch)):
+                # 배치 나누기 위한 index
+                start_idx = i * batch_size
+
+                batch_context = context[start_idx: start_idx + batch_size]
+                batch_queries = queries[start_idx: start_idx + batch_size]
+
+                # 2. neg 만들기
+                _, top_k_indices_batches = retriever.get_relevant_doc_bulk(batch_queries, batch_size * self.num_hard_neg)
+
+                neg_in_batch = []
+                for q_i, top_k_idx in enumerate(top_k_indices_batches): # num of query : batch_size
+                    is_pass = False
+
+                    for j, idx in enumerate(top_k_idx):
+                        # given document. if this is not duplicated with any other positive, add as negative sample.
+                        is_duple = False
+                            
+                        for other_truth_in_batch in batch_context:
+                            if other_truth_in_batch[:10] == self.wiki_contexts[idx]:
+                                is_duple = True
+                                break
+                        if is_duple:
+                            continue
+                        neg_in_batch.append( self.wiki_contexts[idx] )
+                        break # added negative. move on to next negative of other positive passage.
+                            
+                assert len(neg_in_batch) == len(batch_queries), f"mismatch in length of negaive samples and query: \
+                                                                len(neg_in_batch) = {len(neg_in_batch)} \
+                                                                and len(batch_queries) = {len(batch_queries)}"
+
+                # 합치기
+                for b_i in range(len(batch_context)):
+                    p_with_neg.append( batch_context[b_i] )
+                    p_with_neg.append( neg_in_batch[b_i] )
+
+                # sliding window does not overflow. include last index. yay!
+                total += len(context[start_idx: start_idx + batch_size]) 
+
+            assert total == len(context)
+            end = time.time()
+            torch.save(p_with_neg,"./p_with_neg.pt")
+            print("process done! It took ", int(end - start)," secs...")
+
+            queries = queries.tolist()
+
+
+            p_seg = tokenizer(p_with_neg,  padding = "max_length", return_tensors = "pt", truncation = True
+                                )
+            q_seg = tokenizer(queries, 
+                                        padding = "max_length",\
+                                        return_tensors = "pt",\
+                                        truncation = True
+                                        )
+            # p_seg # (batch * 3, max_len)
+            # q_seg # (batch, max_len)
+            # 배치 크기가 달라서 dataloader에 못넣을 듯. batch을 맞춰줘야 한다.
+            max_len = p_seg['input_ids'].size(-1) # max_len 구하기 위해서
+            p_seg['input_ids'] = p_seg['input_ids'].view(-1, self.num_hard_neg + 1, max_len)
+            p_seg['attention_mask'] = p_seg['attention_mask'].view(-1, self.num_hard_neg + 1, max_len) # (-1, num_neg + 1, -1) -> only one dim can be inferred.
+            p_seg['token_type_ids'] = p_seg['token_type_ids'].view(-1, self.num_hard_neg + 1, max_len)
+            # print(p_seg['input_ids'].size())
+            # print(q_seg['input_ids'].size())
+            dataset = TensorDataset(p_seg['input_ids'], p_seg['attention_mask'],   p_seg['token_type_ids'],                                q_seg['input_ids'], q_seg['attention_mask'],   q_seg['token_type_ids'])
+            self.dataloader = DataLoader(dataset, batch_size=self.args.per_device_train_batch_size, shuffle=False)
 
     def prepare_in_batch_negative(self,
         dataset=None,
@@ -318,10 +452,8 @@ class DenseRetrieval:
         # p_woth_neg # (batch * 3)        
         q = dataset['question'] # (batch)
 
-        p_seg = tokenizer(corpus,                                     padding = "max_length",                                    return_tensors = "pt",                                    truncation = True
-                                    )
-        q_seg = tokenizer(q, 
-                                    padding = "max_length",\
+        p_seg = tokenizer(corpus, padding = "max_length",return_tensors = "pt",truncation = True)
+        q_seg = tokenizer(q, padding = "max_length",\
                                     return_tensors = "pt",\
                                     truncation = True
                                     )
@@ -334,7 +466,8 @@ class DenseRetrieval:
         # p_seg['token_type_ids'] = p_seg['token_type_ids'].view(-1, num_neg + 1, max_len)
         # print(p_seg['input_ids'].size())
         # print(q_seg['input_ids'].size())
-        dataset = TensorDataset(p_seg['input_ids'], p_seg['attention_mask'],   p_seg['token_type_ids'],                                q_seg['input_ids'], q_seg['attention_mask'],   q_seg['token_type_ids'])
+        dataset = TensorDataset(p_seg['input_ids'], p_seg['attention_mask'],   p_seg['token_type_ids'],  
+                                q_seg['input_ids'], q_seg['attention_mask'],   q_seg['token_type_ids'])
         self.dataloader = DataLoader(dataset, batch_size=self.args.per_device_train_batch_size)
 
     def train(self,
@@ -392,24 +525,34 @@ class DenseRetrieval:
             print(f"epoch {e} of {self.args.num_train_epochs}")
             logging.info(f"epoch {e} of {self.args.num_train_epochs}")
             epoch_loss = 0
-            for batch in tqdm(self.dataloader):
+            acc_loss = 0
+            for batch_idx, batch in tqdm(enumerate(self.dataloader)):
                 self.p_encoder.train()
                 self.q_encoder.train()
 
                 self.p_encoder.zero_grad()
                 self.q_encoder.zero_grad()
                 
-                # targets = torch.zeros(batch_size).to(args.device, dtype=torch.int64)
-                # p_input = {
-                #     "input_ids":batch[0].view(batch_size * (num_neg + 1), -1).to(args.device), 
-                #     "attention_mask":batch[1].view(batch_size * (num_neg + 1), -1).to(args.device), 
-                #     "token_type_ids":batch[2].view(batch_size * (num_neg + 1), -1).to(args.device)
-                # } # b * 3, max_len
-                p_input = {
-                    "input_ids":batch[0].to(args.device), 
-                    "attention_mask":batch[1].to(args.device), 
-                    "token_type_ids":batch[2].to(args.device)
-                }# b, max_len
+                num_batch_size = args.per_device_train_batch_size
+                if len(batch[0]) < args.per_device_train_batch_size:
+                    num_batch_size = len(batch[0])
+                    
+                if self.hard_negative:
+                    p_input = {
+                        "input_ids":batch[0].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
+                        "attention_mask":batch[1].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
+                        "token_type_ids":batch[2].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device)
+                    } # b * 3, max_len
+                    targets = torch.arange(start=0, end = num_batch_size + num_batch_size * self.num_hard_neg, step=2)
+
+                else:
+                    p_input = {
+                        "input_ids":batch[0].to(args.device), 
+                        "attention_mask":batch[1].to(args.device), 
+                        "token_type_ids":batch[2].to(args.device)
+                    }# b, max_len
+                    targets = torch.arange(0, num_batch_size)#.to(args.device, dtype=torch.int64)#.long()
+
                 q_input = {
                     "input_ids":batch[3].to(args.device), 
                     "attention_mask":batch[4].to(args.device), 
@@ -417,13 +560,9 @@ class DenseRetrieval:
                 }# b, max_len
 
                 # 마지막 배치에 batch size보다 작으면 에러 나는것을 방지. 마지막 한방울까지 모델에 먹입시다!!!
-                num_batch_size = args.per_device_train_batch_size
-                if len(batch[0]) < args.per_device_train_batch_size:
-                    num_batch_size = len(batch[0])
             
                 del batch
 
-                targets = torch.arange(0, num_batch_size).to(args.device, dtype=torch.int64)#.long()
                 # pasage : (m_b, num_neg, max_len) -> (m_b * num_neg, max_len) -> bert -> (m_b * num_neg, max_len, emb) -> cls -> (m_b * num_neg, emb) -> (m_b, num_neg, emb)
                 # query: (m_b, max_len) -> bert -> (m_b, max_len, emb) -> cls -> (m_b, emb) -> view -> (m_b, 1, emb) -> transpose ->  (m_b, emb, 1)
                 # bmm: (m_b, num_neg, 1) -> squeeze -> (m_b, num_neg) -> softmax -> (m_b, num_neg)
@@ -434,6 +573,7 @@ class DenseRetrieval:
 
                 p_emb = self.p_encoder(**p_input) # in hidden state, b, 3, max_len, emb
                 q_emb = self.q_encoder(**q_input)# in hidden state, b, max_len, emb
+
                 # print("original passage bert output size : ", p_output.size())
                 # p_emb = p_output.view(batch_size, num_neg + 1, -1)#[1] # b, 3, emb
                 # print(p_emb.size())
@@ -444,11 +584,39 @@ class DenseRetrieval:
                 # print(f"p_emb.T shape = {p_emb.T.size()}")
                 # print(f"q_emb shape = {q_emb.size()}")
                 sim_scores = torch.matmul(q_emb, p_emb.T )
+                # rand_index = np.random.choice(sim_scores.size(0))
+                # print("dot product results")
+                # print(sim_scores[rand_index])
                 # print(sim_scores.size())
                 sim_scores = F.log_softmax(sim_scores, dim = 1)
+                # print("softmax results")
+                # print(sim_scores[rand_index])
+
+                # negative hard
+                # indices = torch.zeros(num_batch_size, num_batch_size + num_batch_size * self.num_hard_neg).type(torch.int64)  # ( 8 * 16 )
+                # for i in range(indices.size(0)):
+                    # indices[i][i*2] = 1
+                sim_scores = sim_scores.cpu()#.gather(1, indices)
+                # print("gather result")
+                # print(targets[rand_index])
 
                 loss = F.nll_loss(sim_scores, targets)
                 epoch_loss += loss.item()
+                # loss.backward()
+                # https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/20
+                # if self.gradient_accumulation_batch:
+                #     # acc_loss += loss
+                #     accum_iter = self.gradient_accumulation_batch // num_batch_size
+                #     if ((batch_idx + 1) % accum_iter == 0) or (batch_idx + 1 == len(self.dataloader)):
+
+                #         # acc_loss.backward()
+                #         optimizer.step()
+                #         scheduler.step()
+                #         self.q_encoder.zero_grad()
+                #         self.p_encoder.zero_grad()
+
+
+                # else:
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
@@ -457,9 +625,8 @@ class DenseRetrieval:
                 self.p_encoder.zero_grad()
 
                 del p_input, q_input
-                torch.cuda.empty_cache()
 
-            epoch_loss = loss.item() / len(self.dataloader)
+            epoch_loss = epoch_loss / len(self.dataloader)
             print(f"{e} epoch loss:{epoch_loss}")
             logging.info(f"{e} epoch loss:{epoch_loss}")
             log({"train_loss": epoch_loss, "epoch" : e})
@@ -476,7 +643,7 @@ class DenseRetrieval:
                 new_acc = [float("-inf")] * len(topk_list)
                 new_acc = self.evaluate(search_context = tmp_context, topk = topk_list, new_acc = new_acc, partial = partial)
                 for acc_idx, n_a in enumerate(new_acc):
-                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a})
+                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a, "epoch" : e})
                     print(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
                     logging.info(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")                    
 
@@ -485,7 +652,7 @@ class DenseRetrieval:
                 new_acc = [float("-inf")] * len(topk_list)
                 new_acc = self.evaluate(search_context = tmp_context, topk = topk_list, new_acc = new_acc, partial = partial)
                 for acc_idx, n_a in enumerate(new_acc):
-                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a})
+                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a, "epoch" : e})
                     print(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
                     logging.info(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
 
@@ -494,7 +661,7 @@ class DenseRetrieval:
                 new_acc = [float("-inf")] * len(topk_list)
                 new_acc = self.evaluate(search_context = tmp_context, topk = topk_list, new_acc = new_acc, partial = partial)
                 for acc_idx, n_a in enumerate(new_acc):
-                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a})
+                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a, "epoch" : e})
                     print(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
                     logging.info(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
 
@@ -506,7 +673,7 @@ class DenseRetrieval:
                 for acc_idx, n_a in enumerate(new_acc):
                     logging.info(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
                     print(f"{tmp_context}_accuracy_top{topk_list[acc_idx]}: {n_a}")
-                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a})
+                    log({f"{tmp_context}_accuracy_top{topk_list[acc_idx]}": n_a, "epoch" : e})
                     if best_acc[acc_idx] < n_a:
                         best_acc[acc_idx] = n_a
                         print(f"best model in acc of top{topk_list[acc_idx]}_acc_{n_a} update")
@@ -895,9 +1062,9 @@ class DenseRetrieval:
 
             for i in range(topk):
                 print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
-                print(self.contexts[doc_indices[i]])
+                print(self.wiki_contexts[doc_indices[i]])
 
-            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
+            return (doc_scores, [self.wiki_contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
 
@@ -917,7 +1084,7 @@ class DenseRetrieval:
                     # Retrieve한 Passage의 id, context를 반환합니다.
                     "context_id": doc_indices[idx],
                     "context": " ".join(
-                        [self.contexts[pid] for pid in doc_indices[idx]]
+                        [self.wiki_contexts[pid] for pid in doc_indices[idx]]
                     ),
                 }
                 if "context" in example.keys() and "answers" in example.keys():
@@ -1012,8 +1179,9 @@ def train(pretrained_psg_enc = None, pretrained_q_enc = None):
                 group=wandb_args.group,
                 notes=wandb_args.notes)
 
-
-    set_seed(42) # magic number :)
+    # global SEED
+    # SEED = 42
+    set_seed(SEED) # magic number :)
 
 
     print ("PyTorch version:[%s]."% (torch.__version__))
@@ -1027,7 +1195,7 @@ def train(pretrained_psg_enc = None, pretrained_q_enc = None):
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
         learning_rate=1e-5,
-        per_device_train_batch_size=16,
+        per_device_train_batch_size=8,
         per_device_eval_batch_size=412, # use only to encode passage and query. 
         num_train_epochs=100,
         weight_decay=0.01
@@ -1049,10 +1217,12 @@ def train(pretrained_psg_enc = None, pretrained_q_enc = None):
         # num_neg=4,
         tokenizer=tokenizer,
         p_encoder=p_encoder_loaded,
-        q_encoder=q_encoder_loaded
+        q_encoder=q_encoder_loaded,
+        hard_negative= True,
+        # gradient_accumulation_batch=128
     )
     # retriever_loaded.evaluate(search_context = "wiki", topk = [1,5,20,50])
-    retriever_loaded.train(logger = wandb, partial = None, eval_set = ["tr", "eval", "tr_and_ev"])#,"eval", "tr_and_ev"])#"wiki", "eval", "tr_and_ev"]) # partial for debug. validation set(no matter the val set is wiki or eval, etc... partial them to this number only.)
+    retriever_loaded.train(logger = wandb, partial = None, eval_set = ["tr", "eval", "tr_and_ev", "wiki"]) # partial for debug. validation set(no matter the val set is wiki or eval, etc... partial them to this number only.)
     # w = retriever_loaded.load_wikiset(partial = 100)
     # print(len(w))
 
@@ -1091,6 +1261,44 @@ def predict():
         pre_encode_psg = "passage_embedding_top1.pt"
     )
     retriever_loaded.get_dense_embedding()
+    # corpus = evalset['question']
+    # print(retriever_loaded.retrieve(evalset, topk = 1))
+
+def test():
+    args = TrainingArguments(
+        output_dir="dense_retireval",
+        evaluation_strategy="epoch",
+        learning_rate=1e-5,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=512, # use only to encode passage and query. 
+        num_train_epochs=30,
+        weight_decay=0.01
+    )
+    model_checkpoint = "klue/bert-base"
+    # p_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
+    q_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
+    # p_encoder_loaded.load_state_dict(torch.load("../dpr_output/best_p_enc_model_train_loss.pt"))
+    # q_encoder_loaded.load_state_dict(torch.load("../dpr_output/best_p_enc_model_top1.pt"))
+    tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
+
+    dataset = load_from_disk("../data/train_dataset")
+
+    trainset = dataset['train'] # for debug
+    evalset = dataset['validation']
+
+    retriever_loaded = DenseRetrieval(
+        prediction_only=True,
+        args=args,
+        dataset=trainset,
+        evalset=None,
+        # num_neg=4,
+        tokenizer=tokenizer,
+        p_encoder=None,#p_encoder_loaded,
+        q_encoder=q_encoder_loaded,
+        pre_encode_psg = "passage_embedding_top1.pt"
+    )
+    # retriever_loaded.get_dense_embedding()
+    # retriever_loaded.prepare_in_batch_and_hard(())
     # corpus = evalset['question']
     # print(retriever_loaded.retrieve(evalset, topk = 1))
 
