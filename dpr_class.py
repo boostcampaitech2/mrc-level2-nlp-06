@@ -322,13 +322,12 @@ class DenseRetrieval:
             global SEED
             if SEED == 42  and os.path.isfile(f"./p_with_neg_{self.args.per_device_train_batch_size}.pt"):
                 p_with_neg = torch.load(f"./p_with_neg_{self.args.per_device_train_batch_size}.pt")
-                print("loading preprecessed file...")
+                print(f"loading preprecessed file ./p_with_neg_{self.args.per_device_train_batch_size}...")
 
                 
             else:
-
                 retriever = SparseRetrieval(
-                    tokenize_fn=tokenizer.tokenize, data_path=self.data_path, context_path=self.context_path, is_bm25=True
+                    tokenize_fn=tokenizer.tokenize, data_path=self.data_path, context_path=self.context_path, bm25_type="OurBm25"
                 )
                 retriever.get_sparse_embedding()
 
@@ -388,7 +387,7 @@ class DenseRetrieval:
                 print("process done! It took ", int(end - start)," secs...")
 
             queries = queries.tolist()
-
+            # print("length of p_with_neg", len(p_with_neg))
 
             p_seg = tokenizer(p_with_neg,  padding = "max_length", return_tensors = "pt", truncation = True
                                 )
@@ -536,12 +535,12 @@ class DenseRetrieval:
                 num_batch_size = args.per_device_train_batch_size
                 if len(batch[0]) < args.per_device_train_batch_size:
                     num_batch_size = len(batch[0])
-                    
+                # print("batch[0] shape", batch[0].shape)
                 if self.hard_negative:
                     p_input = {
-                        "input_ids":batch[0].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
-                        "attention_mask":batch[1].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
-                        "token_type_ids":batch[2].view(batch_size * (self.num_hard_neg + 1), -1).to(args.device)
+                        "input_ids":batch[0].view(num_batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
+                        "attention_mask":batch[1].view(num_batch_size * (self.num_hard_neg + 1), -1).to(args.device), 
+                        "token_type_ids":batch[2].view(num_batch_size * (self.num_hard_neg + 1), -1).to(args.device)
                     } # b * 3, max_len
                     targets = torch.arange(start=0, end = num_batch_size + num_batch_size * self.num_hard_neg, step=2)
 
