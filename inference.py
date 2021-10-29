@@ -3,12 +3,18 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 
 대부분의 로직은 train.py 와 비슷하나 retrieval, predict 부분이 추가되어 있습니다.
 """
-
+import os
+# multiprocessing을 사용하면 huggingface에서 이런 warning을 내뿜습니다: 
+# huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+# https://github.com/huggingface/transformers/issues/5486에 따르면 use case에 문제가 없으면 그냥 warning을 꺼도 된다고 합니다! 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import logging
 import sys
 from typing import Callable, List, Dict, NoReturn, Tuple
-
+from pathos.multiprocessing import ProcessingPool as Pool
+import pandas as pd
+import time
 import numpy as np
 
 from datasets import (
@@ -42,7 +48,6 @@ from arguments import (
 
 
 logger = logging.getLogger(__name__)
-
 
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
@@ -116,6 +121,9 @@ def run_sparse_retrieval(
     context_path: str = "wikipedia_documents.json",
 ) -> DatasetDict:
 
+    # use global retriever for multi processing for BM25 
+    global retriever
+
     # Query에 맞는 Passage들을 Retrieval 합니다.
     retriever = SparseRetrieval(
         tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25
@@ -128,8 +136,17 @@ def run_sparse_retrieval(
             datasets["validation"], topk=data_args.top_k_retrieval
         )
     else:
-        df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-
+        # if bm25, parallel is faster. ELSE, numpy in TFIDF outperforms the parallel. :/
+        if data_args.bm25:
+            start = time.time()
+            print("Calculating BM25 similarity...")
+            df = retriever.retrieve(
+                datasets["validation"], topk=data_args.top_k_retrieval
+            )
+            end = time.time()
+            print("Done! similarity processing time :%d secs "%(int(end - start)))
+        else:
+            df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
