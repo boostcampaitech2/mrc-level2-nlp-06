@@ -12,12 +12,31 @@ from transformers import AutoTokenizer, BertModel, BertPreTrainedModel, AdamW, T
 from datasets import Dataset, load_from_disk, concatenate_datasets
 
 from retrieval import SparseRetrieval, timer
+from pathos.multiprocessing import ProcessingPool as Pool
 
+retriever = None 
+def par_search(queries, topk):
+    # pool.map may put only one argument. We need two arguments: datasets and topk.
+    def wrapper(query): 
+        tok_q = retriever.tokenize_fn(query)
+        doc_score, doc_indices = retriever.bm25.get_top_n(tok_q, retriever.contexts, n = topk)
+        return doc_indices
+    pool = Pool()
+    pool.restart() 
+    rel_docs_score_indices = pool.map(wrapper, queries)
+    pool.close()
+    pool.join()
+
+    doc_scores = []
+    doc_indices = []
+    for s,idx in rel_docs_score_indices:
+        doc_scores.append( s )
+        doc_indices.append( idx )
+    return doc_scores, doc_indices
 
 class BertEncoder(BertPreTrainedModel):
   def __init__(self, config):
     super(BertEncoder, self).__init__(config)
-
     self.bert = BertModel(config)
     self.init_weights()
       
@@ -36,7 +55,7 @@ class DenseRetrieval(SparseRetrieval):
         arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
     def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data):
-        super().__init__(tokenize_fn, data_path, context_path)
+        super().__init__(tokenize_fn, data_path, context_path, is_bm25)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
         self.num_neg = 2
@@ -85,19 +104,28 @@ class DenseRetrieval(SparseRetrieval):
     def make_train_data(self, tokenizer):
         """ Note: Dense Embedding학습을 하기 위한 데이터셋을 만듭니다. """
         print("make_train_data...")
-
         corpus = np.array(self.contexts)
-        query_vec = self.tfidfv.transform(self.train_data['context'])
-        doc_scores, doc_indices = self.get_topk_similarity(query_vec, self.num_neg*10)
+        queries = self.train_data['context']
+        top_k = self.num_neg*10
+
+        if self.is_bm25==True:
+            global retriever
+            retriever = self
+            doc_scores, doc_indices = par_search(queries, top_k)
+        else:
+            query_vec = self.tfidfv.transform(queries)
+            doc_scores, doc_indices = self.get_topk_similarity(query_vec, top_k)
+
         neg_idxs = []
-        for idx, ind in enumerate(tqdm(doc_indices)): # 4000
+        for idx, ind in enumerate(tqdm(doc_indices[:10])): # 4000
             neg_idx = []
-            for i in range(2, len(ind)): # 2~20 find negative
-                if not self.contexts[ind[i]][:200] in self.train_data['context'][idx]:
+            for i in range(len(ind)): # 2~20 find negative
+                print(self.contexts[ind[i]][:10])
+                if not self.contexts[ind[i]][:10] in self.train_data['context'][idx]:
                     neg_idx.append(ind[i])
                 if len(neg_idx)==self.num_neg: break
             neg_idxs.append(neg_idx)
-        
+
         print(neg_idxs)
         for idx, c in enumerate(tqdm(self.train_data['context'])):
             p_neg = corpus[neg_idxs[idx]]
@@ -332,7 +360,7 @@ if __name__=="__main__":
     )
 
     ## 학습과정 ##
-    # # train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
+    train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
     # train_dataset = dense_retriever.load_train_data()
     # dense_retriever.init_model(model_checkpoint)
     # dense_retriever.train(args, train_dataset)
