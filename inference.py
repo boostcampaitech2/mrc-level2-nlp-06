@@ -49,32 +49,6 @@ from arguments import (
 
 logger = logging.getLogger(__name__)
 
-# for multi processing :(
-retriever = None 
-
-def parallel_search(datasets, topk):
-    """
-    function: parallel_search
-    description: parallel_search for BM25
-    argument:
-        datasets Datasets({id:[...], question:[...]}): datasets to compute similarity with wiki retrieval datasets.
-                  
-    """
-    # pool.map may put only one argument. We need two arguments: datasets and topk.
-    def wrapper(datasets): 
-        return retriever.retrieve(datasets, topk = topk)
-
-    pool = Pool()
-
-    # Do this for safety; pathos inherit issue: once it closes, it will never open the pool. 
-    pool.restart() 
-
-    df = pool.map(wrapper, datasets["validation"])
-    pool.close()
-    pool.join()
-    df = pd.concat(df, ignore_index=True)
-    return df
-
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
@@ -164,10 +138,11 @@ def run_sparse_retrieval(
     else:
         # if bm25, parallel is faster. ELSE, numpy in TFIDF outperforms the parallel. :/
         if data_args.bm25:
-            print("Calculating BM25 similarity...")
             start = time.time()
-            df = parallel_search(datasets, data_args.top_k_retrieval)
-            # df = retriever.retrieve(datasets["validation"],topk=data_args.top_k_retrieval)
+            print("Calculating BM25 similarity...")
+            df = retriever.retrieve(
+                datasets["validation"], topk=data_args.top_k_retrieval
+            )
             end = time.time()
             print("Done! similarity processing time :%d secs "%(int(end - start)))
         else:
