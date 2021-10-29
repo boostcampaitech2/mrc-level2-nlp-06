@@ -98,10 +98,16 @@ def main():
         config=config,
     )
 
+    if data_args.bm25_tokenizer:
+        bm25_tokenizer = AutoTokenizer.from_pretrained(
+            data_args.bm25_tokenizer,
+            use_fast=False,
+        )
+
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_sparse_retrieval(
-            tokenizer.tokenize,
+            bm25_tokenizer.tokenize if bm25_tokenizer else tokenizer.tokenize,
             datasets,
             training_args,
             data_args,
@@ -126,7 +132,7 @@ def run_sparse_retrieval(
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25
+        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, bm25_type=data_args.bm25
     )
     retriever.get_sparse_embedding()
 
@@ -215,7 +221,7 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            #return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=False if model_args.model_name_or_path.split("/")[-1].find("roberta") > -1 else True, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -334,3 +340,5 @@ def run_mrc(
 
 if __name__ == "__main__":
     main()
+    # 기본 명령어
+    # python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/test_dataset/ --model_name_or_path ./models/train_dataset/ --do_predict
