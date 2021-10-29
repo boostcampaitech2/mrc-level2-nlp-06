@@ -54,8 +54,8 @@ class DenseRetrieval(SparseRetrieval):
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
         arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
-    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data):
-        super().__init__(tokenize_fn, data_path, context_path, is_bm25)
+    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, is_bm25=False):
+        super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
         self.num_neg = 2
@@ -117,10 +117,9 @@ class DenseRetrieval(SparseRetrieval):
             doc_scores, doc_indices = self.get_topk_similarity(query_vec, top_k)
 
         neg_idxs = []
-        for idx, ind in enumerate(tqdm(doc_indices[:10])): # 4000
+        for idx, ind in enumerate(tqdm(doc_indices)): # 4000
             neg_idx = []
             for i in range(len(ind)): # 2~20 find negative
-                print(self.contexts[ind[i]][:10])
                 if not self.contexts[ind[i]][:10] in self.train_data['context'][idx]:
                     neg_idx.append(ind[i])
                 if len(neg_idx)==self.num_neg: break
@@ -149,14 +148,15 @@ class DenseRetrieval(SparseRetrieval):
         print(p_seqs['input_ids'].size())  #(num_example, pos + neg, max_len)
         train_dataset = TensorDataset(p_seqs['input_ids'], p_seqs['attention_mask'], p_seqs['token_type_ids'], 
                                 q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids'])                
-        
-        with open('dense_train_data.pickle', "wb") as f:
+
+        with open('./data/dense_train_data.pickle', "wb") as f:
             pickle.dump(train_dataset, f)
+
         return train_dataset
 
     def load_train_data(self):
         """미리 생성된 Dense Embedding 모델학습용 데이터를 불러옵니다."""
-        with open("dense_train_data.pickle", "rb") as f:
+        with open("./data/dense_train_data.pickle", "rb") as f:
             train_dataset = pickle.load(f)
         return train_dataset
         
