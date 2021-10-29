@@ -319,73 +319,73 @@ class DenseRetrieval:
             context = np.array(context)[rand_idx]
             queries = np.array(queries)[rand_idx]
 
-            # global SEED
-            # if SEED == 42 and os.path.isfile("./p_with_neg.pt"):
-            #     p_with_neg = torch.load("./p_with_neg.pt")
-            #     print("loading preprecessed file...")
+            global SEED
+            if SEED == 42  and os.path.isfile(f"./p_with_neg_{self.args.per_device_train_batch_size}.pt"):
+                p_with_neg = torch.load(f"./p_with_neg_{self.args.per_device_train_batch_size}.pt")
+                print("loading preprecessed file...")
 
                 
-            # else:
+            else:
 
-            retriever = SparseRetrieval(
-                tokenize_fn=tokenizer.tokenize, data_path=self.data_path, context_path=self.context_path, is_bm25=True
-            )
-            retriever.get_sparse_embedding()
+                retriever = SparseRetrieval(
+                    tokenize_fn=tokenizer.tokenize, data_path=self.data_path, context_path=self.context_path, is_bm25=True
+                )
+                retriever.get_sparse_embedding()
 
 
 
-            # 1. 배치 나누기.
-            batch_size = self.args.per_device_train_batch_size
-            print("total number of train context : ", len(context))
-            num_mini_batch = ( len(context) // batch_size ) + 1
-            print("num_mini_batch: ", num_mini_batch)
-            total = 0
-            p_with_neg = []
-            start = time.time()
-            print("creating the hard negative examples...")
-            for i in tqdm(range(num_mini_batch)):
-                # 배치 나누기 위한 index
-                start_idx = i * batch_size
+                # 1. 배치 나누기.
+                batch_size = self.args.per_device_train_batch_size
+                print("total number of train context : ", len(context))
+                num_mini_batch = ( len(context) // batch_size ) + 1
+                print("num_mini_batch: ", num_mini_batch)
+                total = 0
+                p_with_neg = []
+                start = time.time()
+                print("creating the hard negative examples...")
+                for i in tqdm(range(num_mini_batch)):
+                    # 배치 나누기 위한 index
+                    start_idx = i * batch_size
 
-                batch_context = context[start_idx: start_idx + batch_size]
-                batch_queries = queries[start_idx: start_idx + batch_size]
+                    batch_context = context[start_idx: start_idx + batch_size]
+                    batch_queries = queries[start_idx: start_idx + batch_size]
 
-                # 2. neg 만들기
-                _, top_k_indices_batches = retriever.get_relevant_doc_bulk(batch_queries, batch_size * self.num_hard_neg)
+                    # 2. neg 만들기
+                    _, top_k_indices_batches = retriever.get_relevant_doc_bulk(batch_queries, batch_size * self.num_hard_neg)
 
-                neg_in_batch = []
-                for q_i, top_k_idx in enumerate(top_k_indices_batches): # num of query : batch_size
-                    is_pass = False
+                    neg_in_batch = []
+                    for q_i, top_k_idx in enumerate(top_k_indices_batches): # num of query : batch_size
+                        is_pass = False
 
-                    for j, idx in enumerate(top_k_idx):
-                        # given document. if this is not duplicated with any other positive, add as negative sample.
-                        is_duple = False
-                            
-                        for other_truth_in_batch in batch_context:
-                            if other_truth_in_batch[:10] == self.wiki_contexts[idx]:
-                                is_duple = True
-                                break
-                        if is_duple:
-                            continue
-                        neg_in_batch.append( self.wiki_contexts[idx] )
-                        break # added negative. move on to next negative of other positive passage.
-                            
-                assert len(neg_in_batch) == len(batch_queries), f"mismatch in length of negaive samples and query: \
-                                                                len(neg_in_batch) = {len(neg_in_batch)} \
-                                                                and len(batch_queries) = {len(batch_queries)}"
+                        for j, idx in enumerate(top_k_idx):
+                            # given document. if this is not duplicated with any other positive, add as negative sample.
+                            is_duple = False
+                                
+                            for other_truth_in_batch in batch_context:
+                                if other_truth_in_batch[:10] == self.wiki_contexts[idx]:
+                                    is_duple = True
+                                    break
+                            if is_duple:
+                                continue
+                            neg_in_batch.append( self.wiki_contexts[idx] )
+                            break # added negative. move on to next negative of other positive passage.
+                                
+                    assert len(neg_in_batch) == len(batch_queries), f"mismatch in length of negaive samples and query: \
+                                                                    len(neg_in_batch) = {len(neg_in_batch)} \
+                                                                    and len(batch_queries) = {len(batch_queries)}"
 
-                # 합치기
-                for b_i in range(len(batch_context)):
-                    p_with_neg.append( batch_context[b_i] )
-                    p_with_neg.append( neg_in_batch[b_i] )
+                    # 합치기
+                    for b_i in range(len(batch_context)):
+                        p_with_neg.append( batch_context[b_i] )
+                        p_with_neg.append( neg_in_batch[b_i] )
 
-                # sliding window does not overflow. include last index. yay!
-                total += len(context[start_idx: start_idx + batch_size]) 
+                    # sliding window does not overflow. include last index. yay!
+                    total += len(context[start_idx: start_idx + batch_size]) 
 
-            assert total == len(context)
-            end = time.time()
-            torch.save(p_with_neg,"./p_with_neg.pt")
-            print("process done! It took ", int(end - start)," secs...")
+                assert total == len(context)
+                end = time.time()
+                torch.save(p_with_neg,f"./p_with_neg_{self.args.per_device_train_batch_size}.pt")
+                print("process done! It took ", int(end - start)," secs...")
 
             queries = queries.tolist()
 
@@ -1179,8 +1179,8 @@ def train(pretrained_psg_enc = None, pretrained_q_enc = None):
                 group=wandb_args.group,
                 notes=wandb_args.notes)
 
-    # global SEED
-    # SEED = 42
+    global SEED
+    SEED = 42
     set_seed(SEED) # magic number :)
 
 
@@ -1195,7 +1195,7 @@ def train(pretrained_psg_enc = None, pretrained_q_enc = None):
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
         learning_rate=1e-5,
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=12,
         per_device_eval_batch_size=412, # use only to encode passage and query. 
         num_train_epochs=100,
         weight_decay=0.01
