@@ -54,16 +54,17 @@ class DenseRetrieval(SparseRetrieval):
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
         arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
-    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, is_bm25=False):
+    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, is_bm25=False, wandb=False):
         super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
-        self.num_neg = 2
+        self.num_neg = 4
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
         self.dense_p_embedding = []
         self.tokenizer = tokenizer
+        self.wandb = wandb
         self.get_sparse_embedding() 
     
     def get_topk_similarity(self, qeury_vec, k):
@@ -239,6 +240,13 @@ class DenseRetrieval(SparseRetrieval):
                 global_step += 1
                 torch.cuda.empty_cache()
 
+            # wandb.log
+            if self.wandb==True:
+                self.get_dense_embedding()
+                topK_list = [1,10,20,50]
+                result = self.topk_experiment(topK_list, self.org_dataset['train'])
+                wandb.log(result)
+
             torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pt")
             torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pt")
         return self.p_encoder, self.q_encoder
@@ -319,7 +327,6 @@ class DenseRetrieval(SparseRetrieval):
         torch.cuda.empty_cache()
         return doc_scores, doc_indices
 
-
     def topk_experiment(self, topK_list, dataset):
         """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
         result_dict = {}
@@ -329,10 +336,31 @@ class DenseRetrieval(SparseRetrieval):
             for index in tqdm(range(len(result_retriever)), desc="topk_experiment"):
                 if  result_retriever['original_context'][index][:200] in result_retriever['context'][index]:
                     correct += 1
-            result_dict[topK] = correct/len(result_retriever)
+            result_dict["topk_" + str(topK)] = correct/len(result_retriever)
         return result_dict
 
+
 if __name__=="__main__":
+
+    import wandb
+    from arguments import (ModelArguments, DataTrainingArguments)
+    from wandb_arguments import WandBArguments
+    from transformers import HfArgumentParser, set_seed
+    from utils.init_wandb import wandb_args_init
+
+    wandb.login()
+    wandb.init()
+    print(WandBArguments)
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, WandBArguments))
+    model_args, data_args,wandb_args = parser.parse_args_into_dataclasses()
+    wandb_args= wandb_args_init(wandb_args, model_args)
+    wandb.init(project=wandb_args.project,
+                entity=wandb_args.entity,
+                name=wandb_args.name,
+                tags=wandb_args.tags,
+                group=wandb_args.group,
+                notes=wandb_args.notes)
+
     data_path  = "../data/"
     dataset_path = "../data/train_dataset"
     context_path = "wikipedia_documents.json"
@@ -347,7 +375,8 @@ if __name__=="__main__":
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint,use_fast=False,)
     dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, 
                                     context_path = context_path, dataset_path=dataset_path, 
-                                    tokenizer=tokenizer, train_data=org_dataset['train'])
+                                    tokenizer=tokenizer, train_data=org_dataset['train'], 
+                                    is_bm25=True, wandb=True)
 
     args = TrainingArguments(
         output_dir="dense_retireval",
@@ -355,19 +384,19 @@ if __name__=="__main__":
         learning_rate=1e-5,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=40,
+        num_train_epochs=15,
         weight_decay=0.01,
     )
 
     ## 학습과정 ##
-    train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
-    # train_dataset = dense_retriever.load_train_data()
-    # dense_retriever.init_model(model_checkpoint)
-    # dense_retriever.train(args, train_dataset)
+    # train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
+    train_dataset = dense_retriever.load_train_data()
+    dense_retriever.init_model(model_checkpoint)
+    dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
     dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_5.pt", "outputs/q_encoder_5.pt")
-    #dense_retriever.get_dense_embedding()
+    dense_retriever.get_dense_embedding()
     with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
         dense_retriever.dense_p_embedding = pickle.load(f)
 
