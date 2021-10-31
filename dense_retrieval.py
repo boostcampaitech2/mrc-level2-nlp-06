@@ -58,7 +58,7 @@ class DenseRetrieval(SparseRetrieval):
         super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
-        self.num_neg = 4
+        self.num_neg = 2
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
@@ -244,8 +244,10 @@ class DenseRetrieval(SparseRetrieval):
             if self.wandb==True:
                 self.get_dense_embedding()
                 topK_list = [1,10,20,50]
-                result = self.topk_experiment(topK_list, self.org_dataset['train'])
-                wandb.log(result)
+                result_train = self.topk_experiment(topK_list, self.org_dataset['train'], datatset_name="train")
+                result_valid = self.topk_experiment(topK_list, self.org_dataset['validation'], datatset_name="valid")
+                result_train.update(result_valid)
+                wandb.log(result_train)
 
             torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pt")
             torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pt")
@@ -327,7 +329,7 @@ class DenseRetrieval(SparseRetrieval):
         torch.cuda.empty_cache()
         return doc_scores, doc_indices
 
-    def topk_experiment(self, topK_list, dataset):
+    def topk_experiment(self, topK_list, dataset, datatset_name="train"):
         """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
         result_dict = {}
         for topK in tqdm(topK_list):
@@ -336,7 +338,7 @@ class DenseRetrieval(SparseRetrieval):
             for index in tqdm(range(len(result_retriever)), desc="topk_experiment"):
                 if  result_retriever['original_context'][index][:200] in result_retriever['context'][index]:
                     correct += 1
-            result_dict["topk_" + str(topK)] = correct/len(result_retriever)
+            result_dict[datatset_name + "_topk_" + str(topK)] = correct/len(result_retriever)
         return result_dict
 
 
@@ -381,10 +383,10 @@ if __name__=="__main__":
     args = TrainingArguments(
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
-        learning_rate=1e-5,
+        learning_rate=8e-6,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=15,
+        num_train_epochs=20,
         weight_decay=0.01,
     )
 
