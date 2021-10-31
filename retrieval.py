@@ -23,6 +23,8 @@ from datasets import (
 
 import rank_bm25
 
+from utils.preprocess import preprocess_wiki_documents
+
 @contextmanager
 def timer(name):
     t0 = time.time()
@@ -115,6 +117,9 @@ class SparseRetrieval:
         )  # set 은 매번 순서가 바뀌므로
         print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
+
+        # wiki 전처리
+        # self.contexts = preprocess_wiki_documents(self.contexts)
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
@@ -539,6 +544,7 @@ if __name__ == "__main__":
         "--context_path", metavar="wikipedia_documents", type=str, help=""
     )
     parser.add_argument("--use_faiss", metavar=False, type=bool, help="")
+    parser.add_argument("--use_wiki_preprocessing", metavar=False, type=bool, help="")
 
     args = parser.parse_args()
 
