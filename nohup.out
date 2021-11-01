@@ -1,0 +1,35 @@
+wandb: Currently logged in as: jjackson-dev (use `wandb login --relogin` to force relogin)
+klue/roberta-large
+model is from klue/roberta-large
+data is from ../data/top10_dataset
+Create SongMinJae/2021-10-31 02:00:05 chart in wandB...
+WandB boostcamp-nlp-06/MRC Project Group and tages [klue/roberta-large,['experiment', 'strong_reader', 'SongMinJae', 'klue/roberta-large']]
+wandb: wandb version 0.12.6 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+
+CondaEnvException: Unable to determine environment
+
+Please re-run this command with one of the following options:
+
+* Provide an environment name via --name or -n
+* Re-run this command inside an activated conda environment.
+
+wandb: Tracking run with wandb version 0.12.4
+wandb: Syncing run SongMinJae/2021-10-31 02:00:05
+wandb:  View project at https://wandb.ai/boostcamp-nlp-06/MRC
+wandb:  View run at https://wandb.ai/boostcamp-nlp-06/MRC/runs/n2bjod23
+wandb: Run data is saved locally in /opt/ml/mrc-level2-nlp-06/wandb/run-20211030_170005-n2bjod23
+wandb: Run `wandb offline` to turn off syncing.
+
+DatasetDict({
+    train: Dataset({
+        features: ['answers', 'context', 'id', 'question'],
+        num_rows: 3952
+    })
+    validation: Dataset({
+        features: ['answers', 'context', 'id', 'question'],
+        num_rows: 240
+    })
+})
+/opt/conda/lib/python3.8/multiprocessing/resource_tracker.py:216: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

@@ -190,7 +190,7 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
                     tokenized_examples["end_positions"].append(token_end_index + 1)
         ################ prepare train feature에서 가지고 온 코드 끝 ################
         return tokenized_examples
-    dataset_list = [] 
+    dataset_dict = {}
     if training_args.do_train:        
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
@@ -204,12 +204,13 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
-        dataset_list.append(train_dataset)
+        dataset_dict['train'] = train_dataset
     # Validation preprocessing  
     if training_args.do_eval:        
         eval_dataset = datasets["validation"]
         column_names = eval_dataset.column_names    
         # Validation Feature 생성
+        print("Do EVAL")
         eval_dataset = eval_dataset.map(
             prepare_validation_features,
             batched=True,
@@ -217,6 +218,7 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
-        dataset_list.append(eval_dataset)
-    return dataset_list, answer_column_name
+        dataset_dict['validation'] =eval_dataset
+
+    return dataset_dict, answer_column_name
 

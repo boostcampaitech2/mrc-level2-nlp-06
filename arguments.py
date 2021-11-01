@@ -39,7 +39,7 @@ class DataTrainingArguments:
     """
 
     dataset_name: Optional[str] = field(
-        default="../data/topk_dataset",
+        default="../data/top5_dataset",
         metadata={"help": "The name of the dataset to use."},
     )
     overwrite_cache: bool = field(
@@ -86,7 +86,7 @@ class DataTrainingArguments:
         default=64, metadata={"help": "Define how many clusters to use for faiss."}
     )
     top_k_retrieval: int = field(
-        default=1,
+        default=20,
         metadata={
             "help": "Define how many top-k passages to retrieve based on similarity."
         },

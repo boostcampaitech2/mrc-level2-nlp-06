@@ -123,7 +123,7 @@ def run_mrc(
         data_args, training_args, datasets, tokenizer
     )
     # Train preprocessing / 전처리를 진행합니다.
-    dataset_list, answer_column_name = prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length)
+    dataset_dict, answer_column_name = prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length)
     
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
@@ -138,8 +138,9 @@ def run_mrc(
     
     post_processing_function = post_processing_fuction_with_setting(data_args, datasets["validation"], answer_column_name)
     # Trainer 초기화
-    train_dataset = dataset_list[0] if training_args.do_train else None
-    eval_dataset = dataset_list[1] if training_args.do_eval else None
+    print(f"dataset_list길이 :: ", dataset_dict.keys())
+    train_dataset = dataset_dict["train"] if training_args.do_train else None
+    eval_dataset = dataset_dict["validation"] if training_args.do_eval else None
     trainer = QuestionAnsweringTrainer( 
         model=model,
         args=training_args,
