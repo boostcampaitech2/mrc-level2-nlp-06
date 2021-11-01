@@ -95,7 +95,7 @@ class DataTrainingArguments:
         default=False, metadata={"help": "Whether to build with faiss"}
     )
     bm25: str = field(
-        default="OurBm25Plus",
+        default="OurBm25",
         metadata={"help": "Run bm25 for default retrival. Optoins: OurBm25Plus, OurBm25L, OurBm25. Empty string "" to use TFIDF"}
     )
     bm25_tokenizer: str = field(
