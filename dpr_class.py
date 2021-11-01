@@ -149,8 +149,8 @@ class DenseRetrieval:
         evalset = None,
         p_encoder = None,
         q_encoder = None,
-        # prediction_only = False, # when using inference
-        # pre_encode_psg = None,# when using inference
+        prediction_only = False, # when using inference
+        pre_encode_psg = None,# when using inference
         hard_negative = False,
         # gradient_accumulation_batch = False # experiment
     ):
@@ -179,8 +179,8 @@ class DenseRetrieval:
         self.hard_negative = hard_negative
 
         # for inference
-        # if pre_encode_psg:
-        #     self.emb_file = pre_encode_psg
+        if pre_encode_psg:
+            self.emb_file = pre_encode_psg
 
         self.data_path = data_path
         self.context_path = context_path
@@ -205,10 +205,11 @@ class DenseRetrieval:
         self.q_encoder = q_encoder.to(args.device)
         self.dataloader = None
         self.num_hard_neg = 1
-        if hard_negative:
-            self.prepare_in_batch_and_hard()
-        else:
-            self.prepare_in_batch_negative()
+        if not prediction_only:
+            if hard_negative:
+                self.prepare_in_batch_and_hard()
+            else:
+                self.prepare_in_batch_negative()
 
         self.p_emb = None
 
@@ -603,7 +604,7 @@ class DenseRetrieval:
         # num_of_file = len(files)
         # print(num_of_file)
         emb = torch.load(path +"/"+ self.emb_file)
-        print(f"{emb_kind} embedding loaded.")
+        print(f"{path}/{self.emb_file} embedding loaded.")
         return emb
         # for i in range(num_of_file): 
         #     emb = torch.load(path + "/passage_embedding" + str(i) + "out_of_" + str(num_of_file) + ".pt")
@@ -756,7 +757,6 @@ class DenseRetrieval:
         queries,
         k=1,
         args=None,
-        corpus = None,
     ):
         """
         Arguments:
@@ -774,9 +774,8 @@ class DenseRetrieval:
             3. 상위 k개의 문서 index를 반환합니다.
         """
         assert self.p_emb is not None, "embed passage first."
-
+        p_emb = self.p_emb
         # pass
-        p_emb = self.encoding_passage(corpus) # (psg_batch, emb)
         q_emb = self.encoding_question(queries) # (1, emb)
     
         with torch.no_grad():
@@ -790,11 +789,9 @@ class DenseRetrieval:
             # print(index)
             # print(sim_score[index])
             index = np.array(index)
-            corpus = np.array(corpus)
-            # print(corpus[index])
         torch.cuda.empty_cache()
 
-        return index[:k]
+        return sim_score[:k], index[:k]
     
     # 다수의 query에 대해 dense embedding에서 가장 유사한 passage들을 불러올 때 index을 반환함.
     def get_relevant_doc_bulk_index_score(self,
@@ -866,9 +863,32 @@ class DenseRetrieval:
 
         return score[:,:k], sim_index[:,:k]
 
+    def calculate_acc(self, new_acc, query, topk, ground_truth, cand_corpus):
+        if isinstance(topk, int):
+            k_list = [topk]
+        else: # already checked if type is either int or List[int]
+            k_list = topk
+
+        score, topk_index = self.get_relevant_doc_bulk_index_score(queries=query)
+        for i, k in enumerate(k_list):
+            sym_index = topk_index[:,:k]
+
+            num_of_val = len(ground_truth)
+            num_correct = 0
+            for j, top_indexes in enumerate(sym_index):
+                for idx in top_indexes:
+                    if cand_corpus[idx][:10] == ground_truth[j][:10]:
+                        num_correct += 1
+                        break
+            eval_acc = num_correct / num_of_val
+
+            if new_acc:
+                new_acc[i] = eval_acc
+        # return new_acc
+
     
     # evaluate performance with given context data, such as wiki, trainset, eval set ...
-    def evaluate(self, search_context = "wiki", topk = 1, new_acc = None, partial = None):
+    def evaluate(self, search_context = "wiki", topk = 1, new_acc = None, partial = None, force_encode = True):
         assert isinstance(topk, int) or all(isinstance(k, int) for k in topk ), "topk type must be int or List[int]"
         print(f"evaluation of {search_context} start...")
 
@@ -897,29 +917,12 @@ class DenseRetrieval:
             cand_corpus = cand_corpus[:partial]
             ground_truth = ground_truth[:partial]
 
-        self.get_dense_embedding(search_context = search_context, partial = partial, force_encode = True)
+        self.get_dense_embedding(search_context = search_context, partial = partial, force_encode = force_encode)
 
-        if isinstance(topk, int):
-            k_list = [topk]
-        else: # already checked if type is either int or List[int]
-            k_list = topk
+
         
-    
-        score, results = self.get_relevant_doc_bulk_index_score(queries=query)
-        for i, k in enumerate(k_list):
-            sym_index = results[:,:k]
+        self.calculate_acc(new_acc, query, topk, ground_truth, cand_corpus)
 
-            num_of_val = len(ground_truth)
-            num_correct = 0
-            for j, top_indexes in enumerate(sym_index):
-                for idx in top_indexes:
-                    if cand_corpus[idx][:10] == ground_truth[j][:10]:
-                        num_correct += 1
-                        break
-            eval_acc = num_correct / num_of_val
-
-            if new_acc:
-                new_acc[i] = eval_acc
 
         # see context output text result
         # num_correct = 0
@@ -961,7 +964,7 @@ class DenseRetrieval:
                     query_or_dataset["question"], k=topk
                 )
             for idx, example in enumerate(
-                tqdm(query_or_dataset, desc="Sparse retrieval: ")
+                tqdm(query_or_dataset, desc="Dense retrieval: ")
             ):
                 tmp = {
                     # Query와 해당 id를 반환합니다.
@@ -983,45 +986,6 @@ class DenseRetrieval:
             return cqas
     # end of DenseRetrieval class
 
-# below are the codes of running and inference...
-def encode_passage(pretrained_p_enc, passage_set):
-
-    pass
-
-
-def load_encoder():
-    p_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
-    p_encoder_loaded.load_state_dict(torch.load("./dpr_output/p_enc_model.pt"))
-    q_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
-    q_encoder_loaded.load_state_dict(torch.load("./dpr_output/q_enc_model.pt"))
-
-def load_embedding():
-    pass
-
-def loaded_encoder_embedding_wiki_test(pretrained_p_enc, pretrained_q_enc):
-    # wiki data encoding
-    # load한 인코더 디코더 값이 저장하기 전과 같은지 확인.
-    retriever_loaded = DenseRetrieval(
-        args=args,
-        dataset=None,#dataset,
-        num_neg=2,
-        tokenizer=tokenizer,
-        p_encoder=pretrained_p_enc,
-        q_encoder=pretrained_q_enc
-    )
-    import time
-    start = time.time()
-
-    with open("../data/wikipedia_documents.json", "r", encoding="utf-8") as f:
-        wiki = json.load(f)
-    print("loaded wiki set")
-    wikiset = list(
-        dict.fromkeys([v["text"] for v in wiki.values()])
-    )  # set 은 매번 순서가 바뀌므로
-    validify(dataset, retriever_loaded, topk = 20000, add_context=wikiset, use_pre_encode = True)
-
-    end = time.time()
-    print(int(end - start))
 
 def train(pretrained_psg_enc = None, pretrained_q_enc = None):
  
@@ -1144,11 +1108,14 @@ def test():
         num_train_epochs=30,
         weight_decay=0.01
     )
+
+    topk = 1
+
     model_checkpoint = "klue/bert-base"
-    # p_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
+    p_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
     q_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
-    # p_encoder_loaded.load_state_dict(torch.load("../dpr_output/best_p_enc_model_train_loss.pt"))
-    # q_encoder_loaded.load_state_dict(torch.load("../dpr_output/best_p_enc_model_top1.pt"))
+    p_encoder_loaded.load_state_dict(torch.load(f"../dpr_output/best_p_enc_model_top{topk}.pt"))
+    q_encoder_loaded.load_state_dict(torch.load(f"../dpr_output/best_q_enc_model_top{topk}.pt"))
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
 
     dataset = load_from_disk("../data/train_dataset")
@@ -1160,17 +1127,37 @@ def test():
         prediction_only=True,
         args=args,
         dataset=trainset,
-        evalset=None,
+        evalset=evalset,
         # num_neg=4,
         tokenizer=tokenizer,
-        p_encoder=None,#p_encoder_loaded,
+        p_encoder=p_encoder_loaded,
         q_encoder=q_encoder_loaded,
-        pre_encode_psg = "passage_embedding_top1.pt"
+        pre_encode_psg = f"passage_embedding_top{topk}.pt"
     )
-    # retriever_loaded.get_dense_embedding()
-    # retriever_loaded.prepare_in_batch_and_hard(())
-    # corpus = evalset['question']
-    # print(retriever_loaded.retrieve(evalset, topk = 1))
+    # to test accuracy
+    # acc = [float('-inf')]
+    # acc = retriever_loaded.evaluate(search_context = "wiki", topk = topk, new_acc = acc, partial = None, force_encode = False)
+    # print(f"top{topk} best acc, ", acc)
 
+
+    # to retrieve single query
+    # query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
+    # retriever_loaded.get_dense_embedding()
+    # res = retriever_loaded.retrieve(query_or_dataset = query, topk = 1)
+
+    # to retrieve mult queries
+    mult_q = [ "미국의 대통령은 누구인가?",
+    '스카버러 남쪽과 코보콘그 마을의 철도 노선이 처음 연장된 연도는?',
+    '촌락에서 운영 위원 후보자 이름을 쓰기위해 사용된 것은?',
+    '로타이르가 백조를 구하기 위해 사용한 것은?',
+    '의견을 자유롭게 나누는 것은 조직 내 어떤 관계에  서 가능한가?']
+
+    retriever_loaded.get_dense_embedding()
+    res = retriever_loaded.get_relevant_doc_bulk(queries = mult_q, k = 1)
+    # print(type(res[0].tolist()))
+    # print(res.tolist())
+    print(res[0])
+    print(res[1])
 if __name__ == "__main__":
-    train()
+    # train()
+    test()
