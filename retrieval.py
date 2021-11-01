@@ -5,14 +5,14 @@ import faiss
 import pickle
 import numpy as np
 import pandas as pd
-
+from torch.nn.functional import softmax
 from pathos.multiprocessing import ProcessingPool as Pool
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
 from typing import List, Tuple, NoReturn, Any, Optional, Union
-
-
+from transformers import AutoTokenizer
+import torch
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from datasets import (
@@ -22,6 +22,7 @@ from datasets import (
 )
 
 import rank_bm25
+from utils.utils_dpr import get_dpr_score
 
 @contextmanager
 def timer(name):
@@ -31,6 +32,26 @@ def timer(name):
 
 # for multi processing :(
 retriever = None 
+def par_score(queries, topk):
+    # pool.map may put only one argument. We need two arguments: datasets and topk.
+    def wrapper(query): 
+        rel_doc = retriever.get_relevant_doc_dpr(query, k = topk)
+        return rel_doc
+    pool = Pool()
+
+    pool.restart() 
+
+    rel_docs_score_indices = pool.map(wrapper, queries)
+    pool.close()
+    pool.join()
+
+    doc_scores = []
+    doc_indices = []
+    for s,idx in rel_docs_score_indices:
+        doc_scores.append( s )
+        doc_indices.append( idx )
+
+    return doc_scores, doc_indices
 
 def par_search(queries, topk):
     # pool.map may put only one argument. We need two arguments: datasets and topk.
@@ -53,6 +74,7 @@ def par_search(queries, topk):
         doc_indices.append( idx )
 
     return doc_scores, doc_indices
+
 
 
 class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 import BM250kapi"  
@@ -131,6 +153,7 @@ class SparseRetrieval:
         self.k1 = k1
         self.b = b
         self.epsilon = epsilon
+
 
     def get_sparse_embedding(self) -> NoReturn:
 
@@ -221,6 +244,53 @@ class SparseRetrieval:
             self.indexer.add(p_emb)
             faiss.write_index(self.indexer, indexer_path)
             print("Faiss Indexer Saved.")
+
+    def retrieve_dpr(self, dataset, topk: Optional[int] = 1):
+        tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
+        dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer)
+
+        bm25_score = []
+        for query in dataset['question']:
+            tok_q = self.tokenize_fn(query)
+            bm25_score.append(self.bm25.get_scores(tok_q))
+        bm25_score = torch.tensor(np.array(bm25_score))
+        dpr_score = softmax(dpr_score,dim=1)
+        bm25_score = softmax(bm25_score,dim=1)
+
+        total_score = []
+        for idx in range(len(dataset['question'])):
+            total_score.append((dpr_score[idx]*0.1+bm25_score[idx]).tolist())
+        total_score = torch.tensor(np.array(total_score))
+        ranks = torch.argsort(total_score, dim=1, descending=True).squeeze()
+        context_list = []
+        for index in range(len(ranks)):
+            k_list = []
+            for i in range(topk):
+                k_list.append(self.contexts[ranks[index][i]])
+            context_list.append(k_list)
+                
+        total = []
+        for idx, example in enumerate(
+            tqdm(dataset, desc="Sparse retrieval: ")
+        ):
+            tmp = {
+                # Query와 해당 id를 반환합니다.
+                "question": example["question"],
+                "id": example["id"],
+                # Retrieve한 Passage의 id, context를 반환합니다.
+                "context_id": ranks[idx][:topk],
+                "context": " ".join(
+                    context_list[idx]
+                ),
+            }
+            if "context" in example.keys() and "answers" in example.keys():
+                # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                tmp["original_context"] = example["context"]
+                tmp["answers"] = example["answers"]
+            total.append(tmp)
+
+        cqas = pd.DataFrame(total)
+        return cqas
 
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
@@ -321,8 +391,6 @@ class SparseRetrieval:
         else: # Added this branch because parallel processing increases the risk of malfunctioning. 
             raise Exception('The input is neither str, dataset, nor dict.')
 
-
-
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
         """
@@ -358,7 +426,7 @@ class SparseRetrieval:
                 raise Exception("While processing bm25 with parallel serach, input is expected to be a single query, but somethong went wrong. Find this error in get_relevant_doc in retrieval.py")
             doc_score, doc_indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
             return doc_score, doc_indices
-
+        
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:

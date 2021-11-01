@@ -72,7 +72,7 @@ class DataTrainingArguments:
         },
     )
     max_answer_length: int = field(
-        default=30,
+        default=100,
         metadata={
             "help": "The maximum length of an answer that can be generated. This is needed because the start "
             "and end predictions are not conditioned on one another."
@@ -86,7 +86,7 @@ class DataTrainingArguments:
         default=64, metadata={"help": "Define how many clusters to use for faiss."}
     )
     top_k_retrieval: int = field(
-        default=1,
+        default=20,
         metadata={
             "help": "Define how many top-k passages to retrieve based on similarity."
         },

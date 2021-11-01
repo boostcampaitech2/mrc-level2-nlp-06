@@ -8,7 +8,7 @@ class WandBArguments:
     중요 : 위 eval 점수는 단순히 reader의 점수이므로 리더보드의 점수와 다릅니다.
     """
     author: str = field(
-        default="SlaveOfBooDuck",
+        default="SongMinJae",
         metadata={
             "help": "(assential) identifier name"
         },
@@ -21,7 +21,7 @@ class WandBArguments:
     tags: Optional[tuple] = field(
         # 원하시는 tags 적용해주세요, 모델이름과 작성자가 자동으로 추가됩니다!
         # 태그 한개추가시 ("xxx",)  <-- ','를 하나 붙혀줘야 오류가 안나옵니다
-        default=("experiment",), 
+        default=("experiment","dpr+bm25",), 
         metadata={
             "help": "wandB tags list"
         },
