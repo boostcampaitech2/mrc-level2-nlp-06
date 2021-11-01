@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from pathos.multiprocessing import ProcessingPool as Pool
+import pathos as pa
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
@@ -32,7 +33,8 @@ def timer(name):
 # for multi processing :(
 retriever = None 
 
-def par_search(queries, topk):
+def parallel_bm25_search(queries, topk):
+    print("parallel bm25 search start with num worker = ",pa.helpers.cpu_count())
     # pool.map may put only one argument. We need two arguments: datasets and topk.
     def wrapper(query): 
         rel_doc = retriever.get_relevant_doc(query, k = topk)
@@ -61,7 +63,7 @@ class SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
-        bm25_type = False,
+        bm25_type = None,
         k1=1.5, b=0.75, epsilon=0.25
     ) -> NoReturn:
 
@@ -126,6 +128,7 @@ class SparseRetrieval:
 
         # Pickle을 저장합니다.
         if not self.bm25_type: # tfidf
+            print("embedding tfidf")
             pickle_name = f"sparse_embedding.bin"
             tfidfv_name = f"tfidv.bin"
             emd_path = os.path.join(self.data_path, pickle_name)
@@ -148,27 +151,39 @@ class SparseRetrieval:
                 print("Embedding pickle saved.")
 
         else: # bm25
-            assert self.bm25_type in ["OurBm25Plus", "OurBm25L", "OurBm25"], "bm25_type string must be either OurBm25Plus, OurBm25L, or OurBm25. Make sure the Case of letters."
-            bm25_name = f"{self.bm25_type}.bin"
+            print("embedding bm25")
+            assert self.bm25_type in ["OurBm25Plus", "OurBm25L", "OurBm25"], f"You put {self.bm25_type} bm25_type string must be either OurBm25Plus, OurBm25L, or OurBm25. Make sure the Case of letters. "
+
+            ## name of the tokenier
+            # tokenizer.tokenize().__dict__['name_or_path']
+            # 함수에서 instance을 빼내는 __self__
+            # instance에서 attribute을 빼내는 __dict__
+            tokenizer_name = self.tokenize_fn.__self__.__dict__['name_or_path']
+
+            # if klue/bert-base, take only bert-base since "/" char is misintereted as a directory
+            tokenizer_name = tokenizer_name.split("/")[-1]
+
+            bm25_name = f"{self.bm25_type}_{tokenizer_name}.bin"
             bm25_path = os.path.join(self.data_path, bm25_name)
             try: # if file exists
                 with open(bm25_path, "rb") as file:
                     self.bm25 = pickle.load(file)
-                print("Embedding bm25 pickle load.")
+                print(f"Embedding {bm25_name} pickle load.")
             except:
                     
             # else:
-                print(f"Building {self.bm25_type}... It may take minutes...")
+                print(f"Building {self.bm25_name}... It may take minutes...")
                 # bm25 must tokenizer first 
-                # because it runs pool inside and this cuases unexpected result.
+                # unless this cuases unexpected result because it runs pool inside.
                 tokenized_corpus = []
                 for c in self.contexts:
                     tokenized_corpus.append(self.tokenize_fn(c))
 
+                # get one of the bm25 versions
                 module = __import__("bm25")
-                class_ = getattr(module, self.bm25_type)
+                bm25_class = getattr(module, self.bm25_type)
 
-                self.bm25 = class_(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
+                self.bm25 = bm25_class(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
                     pickle.dump(self.bm25, file)
                 print("bm25 pickle saved.")
@@ -386,7 +401,8 @@ class SparseRetrieval:
             # 하나로 쪼개서 안에 들어가서 각각 토크나이즈를 한다.
             global retriever
             retriever = self
-            doc_scores, doc_indices = par_search(queries, k)
+
+            doc_scores, doc_indices = parallel_bm25_search(queries, k)
 
             return doc_scores, doc_indices
 
@@ -542,7 +558,6 @@ if __name__ == "__main__":
     )  # train dev 를 합친 4192 개 질문에 대해 모두 테스트
     print("*" * 40, "query dataset", "*" * 40)
     print(full_ds)
-
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -554,8 +569,9 @@ if __name__ == "__main__":
         tokenize_fn=tokenizer.tokenize,
         data_path=args.data_path,
         context_path=args.context_path,
+        bm25_type = "OurBm25"
     )
-
+    retriever.get_sparse_embedding()
     query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
 
     if args.use_faiss:

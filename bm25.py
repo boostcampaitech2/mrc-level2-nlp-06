@@ -1,10 +1,10 @@
 import rank_bm25
 import numpy as np
 
-def get_top_n(corpus_size, get_scores, query, documents, n=5):
+def get_top_n(corpus_size, get_scores_func, query, documents, n=5):
     assert corpus_size == len(documents), "The documents given don't match the index corpus!"
 
-    scores = get_scores(query)
+    scores = get_scores_func(query)
 
     top_n_idx = np.argsort(scores)[::-1][:n]
     doc_score = scores[top_n_idx]
