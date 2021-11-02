@@ -875,8 +875,8 @@ class DenseRetrieval:
 
             num_of_val = len(ground_truth)
             num_correct = 0
-            for j, top_indexes in enumerate(sym_index):
-                for idx in top_indexes:
+            for j, top_indexes_per_query in enumerate(sym_index):
+                for idx in top_indexes_per_query:
                     if cand_corpus[idx][:10] == ground_truth[j][:10]:
                         num_correct += 1
                         break
