@@ -58,7 +58,7 @@ class DenseRetrieval(SparseRetrieval):
         super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
-        self.num_neg = 2
+        self.num_neg = 4
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
@@ -386,21 +386,21 @@ if __name__=="__main__":
         learning_rate=8e-6,
         per_device_train_batch_size=4,
         per_device_eval_batch_size=4,
-        num_train_epochs=20,
+        num_train_epochs=15,
         weight_decay=0.01,
     )
 
     ## 학습과정 ##
-    # train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
+    train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
     train_dataset = dense_retriever.load_train_data()
     dense_retriever.init_model(model_checkpoint)
     dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_5.pt", "outputs/q_encoder_5.pt")
+    # dense_retriever.load_model(model_checkpoint, "data/p_encoder_14.pt", "data/q_encoder_14.pt")
     dense_retriever.get_dense_embedding()
-    with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
-        dense_retriever.dense_p_embedding = pickle.load(f)
+    # with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
+    #     dense_retriever.dense_p_embedding = pickle.load(f)
 
     ## 추론 ##
     for i in range(10):
@@ -408,6 +408,6 @@ if __name__=="__main__":
         print(df)
 
     ## topk 출력 ##
-    topK_list = [1,10,20]
+    topK_list = [1,10,20,50]
     result = dense_retriever.topk_experiment(topK_list, org_dataset['train'])
     print(result)
