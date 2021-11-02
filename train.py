@@ -6,7 +6,7 @@ from typing import List, Callable, NoReturn, NewType, Any
 import dataclasses
 from datasets import load_metric, load_from_disk, Dataset, DatasetDict
 from utils.postprocess import post_processing_fuction_with_setting
-from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
+from transformers import XLMRobertaConfig, XLMRobertaForQuestionAnswering, AutoTokenizer
 
 from transformers import (
     DataCollatorWithPadding,
@@ -77,7 +77,7 @@ def main():
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
-    config = AutoConfig.from_pretrained(
+    config = XLMRobertaConfig.from_pretrained(
         model_args.config_name
         if model_args.config_name is not None
         else model_args.model_name_or_path,
@@ -91,7 +91,7 @@ def main():
         # rust version이 비교적 속도가 빠릅니다.
         use_fast=True,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = XLMRobertaForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -139,7 +139,7 @@ def run_mrc(
     post_processing_function = post_processing_fuction_with_setting(data_args, datasets["validation"], answer_column_name)
     # Trainer 초기화
     train_dataset = dataset_list[0] if training_args.do_train else None
-    eval_dataset = dataset_list[1] if training_args.do_eval else None
+    eval_dataset = dataset_list[0] if training_args.do_eval else None
     trainer = QuestionAnsweringTrainer( 
         model=model,
         args=training_args,
