@@ -117,6 +117,7 @@ def postprocess_qa_predictions(
 
     # prediction, nbest에 해당하는 OrderedDict 생성합니다.
     all_predictions = collections.OrderedDict()
+    all_predictions_for_saving = collections.OrderedDict()
     all_nbest_json = collections.OrderedDict()
     if version_2_with_negative:
         scores_diff_json = collections.OrderedDict()
@@ -243,7 +244,15 @@ def postprocess_qa_predictions(
 
         # best prediction을 선택합니다.
         if not version_2_with_negative:
-            all_predictions[example["id"]] = predictions[0]["text"]
+            cand_list = []
+            for i in range(3):
+                if i >= len(predictions):
+                    break
+                pred = predictions[i]
+                cand_list.append( (pred["text"], pred["probability"]) )
+            all_predictions[example["id"]] = cand_list
+            all_predictions_for_saving[example["id"]] = pred["text"]
+
         else:
             # else case : 먼저 비어 있지 않은 최상의 예측을 찾아야 합니다
             i = 0
@@ -299,7 +308,7 @@ def postprocess_qa_predictions(
         logger.info(f"Saving predictions to {prediction_file}.")
         with open(prediction_file, "w", encoding="utf-8") as writer:
             writer.write(
-                json.dumps(all_predictions, indent=4, ensure_ascii=False) + "\n"
+                json.dumps(all_predictions_for_saving, indent=4, ensure_ascii=False) + "\n"
             )
         logger.info(f"Saving nbest_preds to {nbest_file}.")
         with open(nbest_file, "w", encoding="utf-8") as writer:

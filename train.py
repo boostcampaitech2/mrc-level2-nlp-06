@@ -97,13 +97,13 @@ def main():
         config=config,
     )
 
-    print(
-        type(training_args),
-        type(model_args),
-        type(datasets),
-        type(tokenizer),
-        type(model),
-    )
+    # print(
+    #     type(training_args),
+    #     type(model_args),
+    #     type(datasets),
+    #     type(tokenizer),
+    #     type(model),
+    # )
 
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
@@ -133,7 +133,32 @@ def run_mrc(
     )
     metric = load_metric("squad")
 
+    # prepare wandb table
+    evalset = datasets['validation']
+    eval_dict = {}
+    for idx, data in enumerate(evalset):
+        eval_dict[data['id']] = idx
+    
+    # wandb table
+    def show_wanbd_table(p: EvalPrediction):
+        table_data = []
+        for idx, pred in enumerate(p.predictions):
+            label = p.label_ids[idx]
+            # p.prediction {'id': 'mrc-0-001960', 'prediction_text': '스위스 신문인 슈바이츠 암 존탁'},
+            # p.label_id {'id': 'mrc-0-003083', 'answers': {'answer_start': [247], 'text': ['미나미 지로']}}
+
+            # pred['prediction_cands] = [(predicted_text, score), (predicted_text, score), ...]
+            table_data.append( [pred['id'], pred['prediction_text'],#pred['prediction_cands'][0][0], \
+                                label['answers']['answer_start'],label['answers']['text'][0],\
+                                evalset[eval_dict[pred['id']]]['context'], evalset[eval_dict[pred['id']]]['question']
+                                ] )
+        columns = ["id", "pred_answer", "label_answer_start", "label_answer", "context", "question"]
+        ans_table = wandb.Table(data = table_data, columns = columns)
+        wandb.log({"answer":ans_table})
+
     def compute_metrics(p: EvalPrediction):
+        show_wanbd_table(p)
+
         return metric.compute(predictions=p.predictions, references=p.label_ids)
     
     post_processing_function = post_processing_fuction_with_setting(data_args, datasets["validation"], answer_column_name)
@@ -199,3 +224,4 @@ def run_mrc(
 
 if __name__ == "__main__":
     main()
+    #  python train.py --output_dir ./outputs/roberta-large-512 --do_train --do_eval --num_train_epochs 30 --model_name_or_path klue/roberta-large --eval_steps 100 --evaluation_strategy steps --overwrite_output_dir --save_total_limit 3 --load_best_model_at_end
