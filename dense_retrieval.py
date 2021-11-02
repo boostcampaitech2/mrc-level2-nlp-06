@@ -58,7 +58,7 @@ class DenseRetrieval(SparseRetrieval):
         super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
-        self.num_neg = 4
+        self.num_neg = 20
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
@@ -384,8 +384,8 @@ if __name__=="__main__":
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
         learning_rate=8e-6,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         num_train_epochs=15,
         weight_decay=0.01,
     )
