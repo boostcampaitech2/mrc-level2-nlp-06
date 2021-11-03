@@ -4,7 +4,7 @@ import sys
 from utils.preprocess import prepare_datasets_with_setting
 from typing import List, Callable, NoReturn, NewType, Any
 import dataclasses
-from datasets import load_metric, load_from_disk, Dataset, DatasetDict
+from datasets import load_metric, load_from_disk, Dataset, DatasetDict, Features, Value, Sequence
 from utils.postprocess import post_processing_fuction_with_setting
 from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
 
@@ -73,6 +73,56 @@ def main():
     set_seed(training_args.seed)
 
     datasets = load_from_disk(data_args.dataset_name)
+    # preprocess trainset
+    trainset = datasets['train']
+    evalset = datasets['validation']
+    import pandas as pd
+    def create_df(dataset):
+        __index_level_0__ = dataset['__index_level_0__']
+        title = dataset['title']
+        context = dataset['context']
+        question = dataset['question']
+        id = dataset['id']
+        document_id = dataset['document_id']
+        answers = dataset['answers']
+        df = pd.DataFrame({
+                            "__index_level_0__":__index_level_0__,
+                            "title" : title, 
+                            "context" : context,
+                            "question" : question,
+                            "id": id,
+                            "document_id":document_id,
+                            "answers":answers
+                        })
+        return df
+    df = create_df(trainset)
+    import re
+    def preprocess(text):
+        text = re.sub(r'\n', ' ', text)
+        text = re.sub(r"\\n", " ", text)
+        text = re.sub(r'\\n\\n', ' ', text)
+        text = re.sub(r'\n\n', " ", text)
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r'#', ' ', text)
+        return text
+    df['context'] = df['context'].map(preprocess)
+    f = Features(
+        {
+            "answers": Sequence(
+                feature={
+                    "text": Value(dtype="string", id=None),
+                    "answer_start": Value(dtype="int32", id=None),
+                },
+                length=-1,
+                id=None,
+            ),
+            "context": Value(dtype="string", id=None),
+            "id": Value(dtype="string", id=None),
+            "question": Value(dtype="string", id=None),
+        }
+    )
+    datasets = DatasetDict({"train": Dataset.from_pandas(df, features=evalset.features), "validation":evalset})
+
     print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
