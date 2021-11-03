@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 from datetime import datetime
 from pytz import timezone
 from utils.init_wandb import wandb_args_init
+
+from bert_lstm import BERT_LSTM, BERT_QA
+
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
@@ -73,57 +76,7 @@ def main():
     set_seed(training_args.seed)
 
     datasets = load_from_disk(data_args.dataset_name)
-    # preprocess trainset
-    trainset = datasets['train']
-    evalset = datasets['validation']
-    import pandas as pd
-    def create_df(dataset):
-        __index_level_0__ = dataset['__index_level_0__']
-        title = dataset['title']
-        context = dataset['context']
-        question = dataset['question']
-        id = dataset['id']
-        document_id = dataset['document_id']
-        answers = dataset['answers']
-        df = pd.DataFrame({
-                            "__index_level_0__":__index_level_0__,
-                            "title" : title, 
-                            "context" : context,
-                            "question" : question,
-                            "id": id,
-                            "document_id":document_id,
-                            "answers":answers
-                        })
-        return df
-    df = create_df(trainset)
-    import re
-    def preprocess(text):
-        text = re.sub(r'\n', ' ', text)
-        text = re.sub(r"\\n", " ", text)
-        text = re.sub(r'\\n\\n', ' ', text)
-        text = re.sub(r'\n\n', " ", text)
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r'#', ' ', text)
-        return text
-    df['context'] = df['context'].map(preprocess)
-    f = Features(
-        {
-            "answers": Sequence(
-                feature={
-                    "text": Value(dtype="string", id=None),
-                    "answer_start": Value(dtype="int32", id=None),
-                },
-                length=-1,
-                id=None,
-            ),
-            "context": Value(dtype="string", id=None),
-            "id": Value(dtype="string", id=None),
-            "question": Value(dtype="string", id=None),
-        }
-    )
-    datasets = DatasetDict({"train": Dataset.from_pandas(df, features=evalset.features), "validation":evalset})
 
-    print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
@@ -132,6 +85,7 @@ def main():
         if model_args.config_name is not None
         else model_args.model_name_or_path,
     )
+    # print(config)
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name
         if model_args.tokenizer_name is not None
@@ -147,6 +101,9 @@ def main():
         config=config,
     )
 
+    model = BERT_LSTM() # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
+    # print(model.parameters) # qa_output (1024, 2)
+
     # print(
     #     type(training_args),
     #     type(model_args),
@@ -154,7 +111,7 @@ def main():
     #     type(tokenizer),
     #     type(model),
     # )
-
+    training_args.label_names = ["start_positions", "end_positions"]
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
@@ -279,4 +236,4 @@ def run_mrc(
 
 if __name__ == "__main__":
     main()
-    #  python train.py --output_dir ./outputs/roberta-large-512 --do_train --do_eval --num_train_epochs 30 --model_name_or_path klue/roberta-large --eval_steps 100 --evaluation_strategy steps --overwrite_output_dir --save_total_limit 3 --load_best_model_at_end
+    #  python train.py --output_dir ./outputs/roberta-large-512 --do_train --do_eval --num_train_epochs 30 --model_name_or_path klue/bert-base --eval_steps 100 --evaluation_strategy steps --overwrite_output_dir --save_total_limit 3 --load_best_model_at_end
