@@ -245,7 +245,8 @@ class SparseRetrieval:
             faiss.write_index(self.indexer, indexer_path)
             print("Faiss Indexer Saved.")
 
-    def retrieve_dpr(self, dataset, topk: Optional[int] = 1):
+    def retrieve_dpr(self, dataset, topk: Optional[int] = 20):
+        print("dpr mode!")
         tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
         dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer)
 
@@ -283,10 +284,10 @@ class SparseRetrieval:
                     context_list[idx]
                 ),
             }
-            if "context" in example.keys() and "answers" in example.keys():
-                # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
-                tmp["original_context"] = example["context"]
-                tmp["answers"] = example["answers"]
+            # if "context" in example.keys() and "answers" in example.keys():
+            #     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+            #     tmp["original_context"] = example["context"]
+            #     tmp["answers"] = example["answers"]
             total.append(tmp)
 
         cqas = pd.DataFrame(total)
