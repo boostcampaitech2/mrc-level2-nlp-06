@@ -148,16 +148,21 @@ def run_mrc(
             # p.label_id {'id': 'mrc-0-003083', 'answers': {'answer_start': [247], 'text': ['미나미 지로']}}
 
             # pred['prediction_cands] = [(predicted_text, score), (predicted_text, score), ...]
-            table_data.append( [pred['id'], pred['prediction_text'],#pred['prediction_cands'][0][0], \
-                                label['answers']['answer_start'],label['answers']['text'][0],\
+            table_data.append( [pred['id'], label['answers']['text'][0],\
+                                pred['prediction_cands'][0][0], pred['prediction_cands'][0][1],\
+                                pred['prediction_cands'][1][0], pred['prediction_cands'][1][1],\
+                                pred['prediction_cands'][2][0], pred['prediction_cands'][2][1],\
+                                label['answers']['answer_start'],\
                                 evalset[eval_dict[pred['id']]]['context'], evalset[eval_dict[pred['id']]]['question']
                                 ] )
-        columns = ["id", "pred_answer", "label_answer_start", "label_answer", "context", "question"]
+        columns = ["id", "label_answer", "1st_pred_answer","1st_score", "2nd_pred_answer","2nd_score", "3rd_pred_answer","3rd_score","label_answer_start",  "context", "question"]
         ans_table = wandb.Table(data = table_data, columns = columns)
         wandb.log({"answer":ans_table})
 
     def compute_metrics(p: EvalPrediction):
         show_wanbd_table(p)
+        for idx, pred in enumerate(p.predictions):
+            del pred['prediction_cands']
 
         return metric.compute(predictions=p.predictions, references=p.label_ids)
     
