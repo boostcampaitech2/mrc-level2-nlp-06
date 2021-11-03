@@ -37,6 +37,8 @@ from arguments import (
 )
 
 
+NUM_OF_PREDICTION = 3
+
 logger = logging.getLogger(__name__)
 
 
@@ -228,7 +230,6 @@ def postprocess_qa_predictions(
         if len(predictions) == 0 or (
             len(predictions) == 1 and predictions[0]["text"] == ""
         ):
-
             predictions.insert(
                 0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0}
             )
@@ -245,11 +246,18 @@ def postprocess_qa_predictions(
         # best prediction을 선택합니다.
         if not version_2_with_negative:
             cand_list = []
-            for i in range(3):
+            for i in range(NUM_OF_PREDICTION):
                 if i >= len(predictions):
                     break
                 pred = predictions[i]
                 cand_list.append( (pred["text"], pred["probability"]) )
+            
+            # 예측이 NUM_OF_PREDICTION 보다 부족하면 마지막것으로 채운다.
+            if len(predictions) <= NUM_OF_PREDICTION:
+                for i in range(NUM_OF_PREDICTION - len(predictions)):
+                    pred = predictions[-1]
+                    cand_list.append( (pred["text"], pred["probability"]) )
+
             all_predictions[example["id"]] = cand_list
             all_predictions_for_saving[example["id"]] = pred["text"]
 

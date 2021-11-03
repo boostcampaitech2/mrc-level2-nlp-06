@@ -1,13 +1,15 @@
-from transformers import BertModel, BertTokenizerFast
+from transformers import BertModel, BertTokenizerFast, AutoModel
 from transformers.modeling_outputs import QuestionAnsweringModelOutput
 from torch import nn
 
+# base code from...
+# https://stackoverflow.com/questions/65205582/how-can-i-add-a-bi-lstm-layer-on-top-of-bert-model?rq=1
 class CustomBERTModel(nn.Module):
     def __init__(self):
           super(CustomBERTModel, self).__init__()
           self.bert = BertModel.from_pretrained("bert-base-uncased")
           ### New layers:
-          self.lstm = nn.LSTM(self.bert.config.hidden_size, 256, batch_first=True,bidirectional=True, num_layers=10)
+          self.lstm = nn.LSTM(self.bert.config.hidden_size, 256, batch_first=True,bidirectional=True)
         #   self.linear = nn.Linear(256*2, <number_of_classes>)
           
     def forward(self, ids, mask):
@@ -22,10 +24,10 @@ class CustomBERTModel(nn.Module):
 
           return linear_output
 
-tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
-model = CustomBERTModel()
+# tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+# model = CustomBERTModel()
 
-
+# 여기부터 시작!
 class BERT_QA(nn.Module):
     def __init__(self):
         super(BERT_QA, self).__init__()
@@ -109,15 +111,14 @@ class BERT_QA(nn.Module):
 
 
 class BERT_LSTM(nn.Module):
-    def __init__(self):
+    def __init__(self, model_name):
         super(BERT_LSTM, self).__init__()
-        self.bert = BertModel.from_pretrained("klue/bert-base")
-
+        self.backbone = AutoModel.from_pretrained(model_name)
         
         ### New layers:
         self.HIDDEN_DIM = 256
 
-        self.lstm = nn.LSTM(self.bert.config.hidden_size, self.HIDDEN_DIM, batch_first=True,bidirectional=True)
+        self.lstm = nn.LSTM(self.backbone.config.hidden_size, self.HIDDEN_DIM, batch_first=True,bidirectional=True, num_layers=1)
         self.qa_outputs = nn.Linear(self.HIDDEN_DIM * 2, 2) # * 2 concat bidirection lstm hidden state
 
         #   self.linear = nn.Linear(HIDDEN_DIM*2, <number_of_classes>)
@@ -138,7 +139,7 @@ class BERT_LSTM(nn.Module):
         return_dict=None,):
         
         # sequence_output, pooled_output 
-        outputs = self.bert(
+        outputs = self.backbone(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -177,8 +178,8 @@ class BERT_LSTM(nn.Module):
         start_logits = start_logits.squeeze(-1).contiguous()
         end_logits = end_logits.squeeze(-1).contiguous()
 
-        # print(start_logits.shape)
-        # print(start_positions.shape)
+        # print(start_logits.shape) # 8, 384
+        # print(start_positions.shape) # 8
 
         total_loss = None
         if start_positions is not None and end_positions is not None:
@@ -217,10 +218,11 @@ class BERT_LSTM(nn.Module):
         
         2가 있는 의미는 분명... bidirectional LSTM에서 나온게 아닐까? 
         view으로 해결!
+
+        결과적으로 h가 아니라 output을 써야 했음 ㅎ
         """
         
         if not return_dict:
-        # if False:
             output = (start_logits, end_logits) + outputs[2:]
             return ((total_loss,) + output) if total_loss is not None else output
 

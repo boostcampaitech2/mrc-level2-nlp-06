@@ -101,9 +101,9 @@ def main():
         config=config,
     )
 
-    model = BERT_LSTM() # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
-    # print(model.parameters) # qa_output (1024, 2)
-
+    model = BERT_LSTM(model_args.model_name_or_path) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
+    print(model)
+    # print(list(model.parameters()))
     # print(
     #     type(training_args),
     #     type(model_args),
@@ -155,6 +155,7 @@ def run_mrc(
             # p.label_id {'id': 'mrc-0-003083', 'answers': {'answer_start': [247], 'text': ['미나미 지로']}}
 
             # pred['prediction_cands] = [(predicted_text, score), (predicted_text, score), ...]
+            # print(pred['prediction_cands'])
             table_data.append( [pred['id'], label['answers']['text'][0],\
                                 pred['prediction_cands'][0][0], pred['prediction_cands'][0][1],\
                                 pred['prediction_cands'][1][0], pred['prediction_cands'][1][1],\
@@ -188,6 +189,10 @@ def run_mrc(
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
     )
+
+    # debug
+    # trainer.evaluate()
+    # return
 
     # Training
     if training_args.do_train:
