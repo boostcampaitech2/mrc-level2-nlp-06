@@ -9,7 +9,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="klue/roberta-large",
+        default="/opt/ml/mrc-level2-nlp-06/outputs/strong_train/checkpoint-2000",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         },
@@ -39,7 +39,7 @@ class DataTrainingArguments:
     """
 
     dataset_name: Optional[str] = field(
-        default="../data/top5_dataset",
+        default="../data/added_dataset",
         metadata={"help": "The name of the dataset to use."},
     )
     overwrite_cache: bool = field(
