@@ -107,8 +107,8 @@ class DenseRetrieval(SparseRetrieval):
         """ Note: Dense Embedding학습을 하기 위한 데이터셋을 만듭니다. """
         print("make_train_data...")
         corpus = np.array(self.contexts)
-        queries = self.train_data['context']
-        top_k = self.num_neg + 5
+        queries = self.train_data['question']
+        top_k = self.num_neg * 10
 
         if self.is_bm25==True:
             global retriever
@@ -127,12 +127,19 @@ class DenseRetrieval(SparseRetrieval):
                 if len(neg_idx)==self.num_neg: break
             neg_idxs.append(neg_idx)
 
+        with open('./data/neg_idxs.pickle', "wb") as f:
+            pickle.dump(neg_idxs, f)
+
         print(neg_idxs)
         for idx, c in enumerate(tqdm(self.train_data['context'])):
             p_neg = corpus[neg_idxs[idx]]
             self.p_with_neg.append(c)
             self.p_with_neg.extend(p_neg)
 
+        with open('./data/p_with_neg.pickle', "wb") as f:
+            pickle.dump(self.p_with_neg, f)
+        
+        print(self.p_with_neg)
         print(self.train_data['question'][0])
         print('[Positive context]')
         print(self.p_with_neg[0], '\n')
@@ -352,7 +359,6 @@ if __name__=="__main__":
     from utils.init_wandb import wandb_args_init
 
     wandb.login()
-    wandb.init()
     print(WandBArguments)
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, WandBArguments))
     model_args, data_args,wandb_args = parser.parse_args_into_dataclasses()
