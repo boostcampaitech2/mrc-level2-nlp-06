@@ -21,7 +21,7 @@ class WandBArguments:
     tags: Optional[tuple] = field(
         # 원하시는 tags 적용해주세요, 모델이름과 작성자가 자동으로 추가됩니다!
         # 태그 한개추가시 ("xxx",)  <-- ','를 하나 붙혀줘야 오류가 안나옵니다
-        default=("experiment","dpr+bm25",), 
+        default=("experiment",), 
         metadata={
             "help": "wandB tags list"
         },
