@@ -20,7 +20,7 @@ def par_search(queries, topk):
     def wrapper(query): 
         tok_q = retriever.tokenize_fn(query)
         doc_score, doc_indices = retriever.bm25.get_top_n(tok_q, retriever.contexts, n = topk)
-        return doc_indices
+        return doc_score, doc_indices
     pool = Pool()
     pool.restart() 
     rel_docs_score_indices = pool.map(wrapper, queries)
@@ -54,11 +54,12 @@ class DenseRetrieval(SparseRetrieval):
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
         arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
-    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, is_bm25=False, wandb=False):
+    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, num_neg, is_bm25=False, wandb=False):
         super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
+        self.is_bm25 = is_bm25
         self.org_dataset = load_from_disk(dataset_path)
         self.train_data = train_data
-        self.num_neg = 20
+        self.num_neg = num_neg
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
@@ -107,7 +108,7 @@ class DenseRetrieval(SparseRetrieval):
         print("make_train_data...")
         corpus = np.array(self.contexts)
         queries = self.train_data['context']
-        top_k = self.num_neg*10
+        top_k = self.num_neg + 5
 
         if self.is_bm25==True:
             global retriever
@@ -378,14 +379,14 @@ if __name__=="__main__":
     dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, 
                                     context_path = context_path, dataset_path=dataset_path, 
                                     tokenizer=tokenizer, train_data=org_dataset['train'], 
-                                    is_bm25=True, wandb=True)
+                                    num_neg=12, is_bm25=True, wandb=True)
 
     args = TrainingArguments(
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
         learning_rate=8e-6,
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
         num_train_epochs=15,
         weight_decay=0.01,
     )
