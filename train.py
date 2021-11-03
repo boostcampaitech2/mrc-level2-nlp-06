@@ -101,7 +101,7 @@ def main():
         config=config,
     )
 
-    model = BERT_LSTM(model_args.model_name_or_path) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
+    # model = BERT_LSTM(model_args.model_name_or_path) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
     print(model)
     # print(list(model.parameters()))
     # print(
