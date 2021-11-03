@@ -21,10 +21,10 @@ class BertEncoder(BertPreTrainedModel):
 
 
 def get_dpr_score(query, contexts, tokenizer):
-    config = BertConfig.from_json_file('../qe/config.json')
-    q_encoder = BertEncoder.from_pretrained('../qe/pytorch_model.bin', config=config)
-    config = BertConfig.from_json_file('../pe/config.json')
-    p_encoder = BertEncoder.from_pretrained('../pe/pytorch_model.bin', config=config)
+    p_encoder = BertEncoder.from_pretrained("klue/bert-base")
+    q_encoder = BertEncoder.from_pretrained("klue/bert-base")
+    p_encoder.load_state_dict(torch.load("../dpr/best_p_enc_model.pt"))
+    q_encoder.load_state_dict(torch.load("../dpr/best_q_enc_model.pt"))
     if torch.cuda.is_available():
         p_encoder.cuda()
         q_encoder.cuda()
