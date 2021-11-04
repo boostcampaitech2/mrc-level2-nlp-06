@@ -129,12 +129,13 @@ class SparseRetrieval:
         """
         self.tokenize_fn = tokenize_fn
         self.data_path = data_path
-        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
-            wiki = json.load(f)
+        # with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+        #     wiki = json.load(f)
 
-        self.contexts = list(
-            dict.fromkeys([v["text"] for v in wiki.values()])
-        )  # set 은 매번 순서가 바뀌므로
+        # self.contexts = list(
+        #     dict.fromkeys([v["text"] for v in wiki.values()])
+        # )  # set 은 매번 순서가 바뀌므로
+        self.contexts = load_from_disk("../data/new_wiki")['text']
         print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
 
