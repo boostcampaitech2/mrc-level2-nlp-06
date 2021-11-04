@@ -1,22 +1,23 @@
 import os
-from subprocess import Popen, PIPE, STDOUT
-from elasticsearch import Elasticsearch
 import json
 import pandas as pd
-from tqdm import tqdm
 import kss
-from pororo import Pororo
-from konlpy.tag import Okt, Komoran, Mecab, Hannanum, Kkma
 import logging
 import os
 import sys
+import re
+import pickle
 import numpy as np
+from tqdm import tqdm
+from pororo import Pororo
+from konlpy.tag import Okt, Komoran, Mecab, Hannanum, Kkma
 from utils_qa import postprocess_qa_predictions, check_no_error
-from datasets import load_metric, load_from_disk, Value, Features, Dataset, DatasetDict
-
+from datasets import load_metric, load_from_disk, Value, Features, Dataset, DatasetDict, Sequence
+from subprocess import Popen, PIPE, STDOUT
+from elasticsearch import Elasticsearch
 from typing import Callable, List, Dict, NoReturn, Tuple
-from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
 
+from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
 from transformers import (
     DataCollatorWithPadding,
     EvalPrediction,
@@ -24,11 +25,8 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-
 from trainer_qa import QuestionAnsweringTrainer
 from retrieval import SparseRetrieval
-import re
-
 from arguments import (
     ModelArguments,
     DataTrainingArguments,
@@ -39,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     pororo_tokenizer = Pororo(task='tokenize', lang='ko', model = "mecab.bpe64k.ko")
+    # mecab = Mecab()의 성능 -> pororo보다 안좋다. 그냥 pororo 쓰자
     
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
@@ -83,18 +82,27 @@ def main():
 
     topk = data_args.top_k_retrieval
 
-    # set elastic environment and create dataset
+    # 데이터셋 생성
     es = elastic_setting(index_name = "pororo_tokenize")
     
-    print('make a new dataset for elastic search inference !')
+    print('make a new dataset for elastic search !')
     dataset = load_from_disk('/opt/ml/data/test_dataset')
 
-    datasets = elastic_search_retrieval(topk, es, dataset)
+    # score도 구하고 싶으면 score = True
+    datasets = elastic_search_retrieval(topk, es, dataset, True)
+    if not os.path.isfile("/opt/ml/data/elastic_score.bin"):
+        bin_save("/opt/ml/data/elastic.bin", datasets)
 
     print('run mrc ---- !')
     run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
     print('finish mrc !')
 
+
+def bin_save(save_path, data_set):
+    file = open(save_path, "wb")
+    pickle.dump(data_set, file)
+    file.close()
+    return None
 
 def pororo_tokenizer(data):
     pororo_tokenizer = Pororo(task='tokenize', lang='ko', model = "mecab.bpe64k.ko")
@@ -169,7 +177,7 @@ def elastic_setting(index_name = "pororo_tokenize"):
                         "nori_analyzer": {
                             "type": "custom",
                             "tokenizer": "nori_tokenizer",
-                            "decompound_mode": "discard",
+                            "decompound_mode": "mixed",
                             "filter" : ["stopwords"]
                         }
                     },
@@ -203,55 +211,88 @@ def elastic_setting(index_name = "pororo_tokenize"):
         if you want to check indices in your ES to know what indices have to be deleted, this code helps you [es.indices.get_alias().keys()]
 
         '''
-        populate_index(es_obj=es, index_name=index_name, evidence_corpus=wiki_articles) # 인덱스 내에 값 채움
+        populate_index(es_obj=es, index_name=index_name, evidence_corpus=wiki_articles) # 인덱스 내에 값 채우기
     return es
 
 
-# elastic search topk 입력 후 tokenize 진행해서 prediction 형태로 바꾸기
-def elastic_search_retrieval(topk, es, dataset) :
-        print(f'start {topk} document')
-         
-        dataset = dataset['validation']
-        dataset_context = []
-        dataset_question = dataset['question']
-        dataset_id = dataset['id']
+# elastic search topk 입력 후 tokenize 진행해서 prediction용 형태로 바꾸기
+def elastic_search_retrieval(topk, es, dataset, score=True) :
+    print(f'start {topk} document')
         
-        for question in tqdm(dataset_question) :
-            query = {
-                'query': {
-                    'match': {
-                        'document_text': question
-                        }
+    dataset = dataset['validation']
+    dataset_context = []
+    dataset_question = dataset['question']
+    dataset_id = dataset['id']
+    
+    for question in tqdm(dataset_question) :
+        query = {
+            'query': {
+                'match': {
+                    'document_text': question
                     }
                 }
-            
-            # topk만큼 높은 순위로 context 뽑고 context tokenization
-            topk_docs = es.search(index='pororo_tokenize', body=query, size=topk)['hits']['hits']
-            document_list = []
-            for doc in topk_docs :
-                temp_doc = doc['_source']['document_text']
-                tokenized_doc = pororo_tokenizer(temp_doc)
-                # tokenized_doc = Mecab().morphs(temp_doc)
+            }
+        
+        # topk만큼 score 높은 순위로 뽑아주고 그 context tokenization
+        topk_docs = es.search(index='pororo_tokenize', body=query, size=topk)['hits']['hits']
+        document_list = []
+        for doc in topk_docs :
+            temp_doc = doc['_source']['document_text']
+            tokenized_doc = pororo_tokenizer(temp_doc)
+            # tokenized_doc = Mecab().morphs(temp_doc)
 
-                modified_doc = ''.join([word for word in tokenized_doc])
-                # pororo tokenization 형태 : _ -> 그래서 pororo 사용할 때는 밑의 코드를 통해 concat할 때 다시 없앰
-                modified_doc = modified_doc.replace('▁', ' ')
+            modified_doc = ''.join([word for word in tokenized_doc])
+            # pororo tokenization 형태는 _로 나타난다. 그래서 pororo 사용할 때는 밑의 코드 추가
+            modified_doc = modified_doc.replace('▁', ' ')
 
-                document_list.append(modified_doc)
-            modified_context = ' '.join(document_list)
-            dataset_context.append(modified_context)
+            document_list.append(modified_doc)
+        modified_context = ' '.join(document_list)
+        dataset_context.append(modified_context)
 
+    
+
+    # 이거 위치는 수정할 필요가 있을 듯
+    if score == True: 
+        dataset_score = []
+        print(f'start score documents -- {topk} document')
+        for i, question in tqdm(enumerate(dataset_question)) :
+            query = {
+            'query': {
+                'match': {
+                    'document_text': question
+                    }
+                }
+            }
+
+            docs = es.search(index='pororo_tokenize',body=query,size=topk)['hits']['hits']
+            dataset_score.append([doc['_score'] for doc in docs])
+
+    if score == True : 
+        df = pd.DataFrame({'question' : dataset_question, 'id' : dataset_id, 'context' : dataset_context, 'scores' : dataset_score})
+
+        f = Features({'context': Sequence(feature = Value(dtype='string', id=None), length = -1, id = None),
+                    'id': Value(dtype='string', id=None),
+                    'question': Value(dtype='string', id=None),
+                    'scores' : Sequence(feature=Value(dtype='float64', id = None), length = -1, id = None)
+                })
+    
+        score_datasets = DatasetDict({'validation': Dataset.from_pandas(df, features=f)})
+        return score_datasets
+
+    else : 
         df = pd.DataFrame({'id' : dataset_id, 'question' : dataset_question, 'context' : dataset_context})
 
         f = Features(
             {
-                "context": Value(dtype="string", id=None),
-                "id": Value(dtype="string", id=None),
-                "question": Value(dtype="string", id=None),
+        "context": Value(dtype="string", id=None),
+        "id": Value(dtype="string", id=None),
+        "question": Value(dtype="string", id=None),
             }
         )
         datasets = DatasetDict({'validation': Dataset.from_pandas(df, features=f)})
-        return datasets
+
+    return datasets
+    
 
 
 
