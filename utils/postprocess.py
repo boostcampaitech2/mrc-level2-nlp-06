@@ -12,7 +12,9 @@ def post_processing_fuction_with_setting(data_args, datasets, answer_column_name
             )
             # Metric을 구할 수 있도록 Format을 맞춰줍니다.
             formatted_predictions = [
-                {"id": k, "prediction_text": v} for k, v in predictions.items()
+                # v[0] = (predicted_text, score)
+                # predictions: 'id' : [(predicted_text, score), (predicted_text, score), ...]
+                {"id": k, "prediction_text":v[0][0], "prediction_cands" : v } for k, v in predictions.items()
             ]
             if training_args.do_predict:
                 return formatted_predictions

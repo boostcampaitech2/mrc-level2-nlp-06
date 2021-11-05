@@ -4,10 +4,12 @@ import sys
 from utils.preprocess import prepare_datasets_with_setting
 from typing import List, Callable, NoReturn, NewType, Any
 import dataclasses
-from datasets import load_metric, load_from_disk, Dataset, DatasetDict
+from datasets import load_metric, load_from_disk, Dataset, DatasetDict, Features, Value, Sequence
 from utils.postprocess import post_processing_fuction_with_setting
 from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
-
+import random
+import numpy as np
+import torch
 from transformers import (
     DataCollatorWithPadding,
     EvalPrediction,
@@ -36,10 +38,12 @@ logger = logging.getLogger(__name__)
 from datetime import datetime
 from pytz import timezone
 from utils.init_wandb import wandb_args_init
+
+from bert_lstm import BERT_LSTM, BERT_QA
+
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
-    
 
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments,WandBArguments)
@@ -73,7 +77,7 @@ def main():
     set_seed(training_args.seed)
 
     datasets = load_from_disk(data_args.dataset_name)
-    print(datasets)
+
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
@@ -97,14 +101,16 @@ def main():
         config=config,
     )
 
-    print(
-        type(training_args),
-        type(model_args),
-        type(datasets),
-        type(tokenizer),
-        type(model),
-    )
-
+    model = BERT_LSTM(training_args, model_args.model_name_or_path,2, hidden_dim = 768, dropout = 0) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
+    print(model)
+    # print(
+    #     type(training_args),
+    #     type(model_args),
+    #     type(datasets),
+    #     type(tokenizer),
+    #     type(model),
+    # )
+    training_args.label_names = ["start_positions", "end_positions"]
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
@@ -133,7 +139,38 @@ def run_mrc(
     )
     metric = load_metric("squad")
 
+    # prepare wandb table
+    evalset = datasets['validation']
+    eval_dict = {}
+    for idx, data in enumerate(evalset):
+        eval_dict[data['id']] = idx
+    
+    # wandb table
+    def show_wanbd_table(p: EvalPrediction):
+        table_data = []
+        for idx, pred in enumerate(p.predictions):
+            label = p.label_ids[idx]
+            # p.prediction {'id': 'mrc-0-001960', 'prediction_text': '스위스 신문인 슈바이츠 암 존탁'},
+            # p.label_id {'id': 'mrc-0-003083', 'answers': {'answer_start': [247], 'text': ['미나미 지로']}}
+
+            # pred['prediction_cands] = [(predicted_text, score), (predicted_text, score), ...]
+            # print(pred['prediction_cands'])
+            table_data.append( [pred['id'], label['answers']['text'][0],\
+                                pred['prediction_cands'][0][0], pred['prediction_cands'][0][1],\
+                                pred['prediction_cands'][1][0], pred['prediction_cands'][1][1],\
+                                pred['prediction_cands'][2][0], pred['prediction_cands'][2][1],\
+                                label['answers']['answer_start'],\
+                                evalset[eval_dict[pred['id']]]['context'], evalset[eval_dict[pred['id']]]['question']
+                                ] )
+        columns = ["id", "label_answer", "1st_pred_answer","1st_score", "2nd_pred_answer","2nd_score", "3rd_pred_answer","3rd_score","label_answer_start",  "context", "question"]
+        ans_table = wandb.Table(data = table_data, columns = columns)
+        wandb.log({"answer":ans_table})
+
     def compute_metrics(p: EvalPrediction):
+        show_wanbd_table(p)
+        for idx, pred in enumerate(p.predictions):
+            del pred['prediction_cands']
+
         return metric.compute(predictions=p.predictions, references=p.label_ids)
     
     post_processing_function = post_processing_fuction_with_setting(data_args, datasets["validation"], answer_column_name)
