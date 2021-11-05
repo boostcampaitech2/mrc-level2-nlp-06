@@ -110,6 +110,14 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Run bm25 for default retrival"}
     )
+
+    use_wiki_preprocessing: bool = field (
+        default=False,
+        metadata={
+            "help": "Preprocess wiki documents"
+        },
+    )
+    
     dpr: bool = field(
         default=True,
         metadata={"help": "Run dpr+bm25 for default retrival"}
