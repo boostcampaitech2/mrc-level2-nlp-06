@@ -17,6 +17,8 @@ import pandas as pd
 import time
 import numpy as np
 
+from dpr_class import *
+
 from datasets import (
     load_metric,
     load_from_disk,
@@ -131,6 +133,47 @@ def run_sparse_retrieval(
     global retriever
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
+
+    # dense
+    # args = TrainingArguments(
+    #     output_dir="dense_retireval",
+    #     evaluation_strategy="epoch",
+    #     learning_rate=1e-5,
+    #     per_device_train_batch_size=16,
+    #     per_device_eval_batch_size=512, # use only to encode passage and query. 
+    #     num_train_epochs=30,
+    #     weight_decay=0.01
+    # )
+
+    # topk = data_args.top_k_retrieval
+
+    # model_checkpoint = "klue/bert-base"
+    # p_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
+    # q_encoder_loaded = BertEncoder.from_pretrained(model_checkpoint).to(args.device)
+    # p_encoder_loaded.load_state_dict(torch.load(f"../dpr_output/best_p_enc_model_top{topk}.pt"))
+    # q_encoder_loaded.load_state_dict(torch.load(f"../dpr_output/best_q_enc_model_top{topk}.pt"))
+    # tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
+
+    # dataset = load_from_disk("../data/train_dataset")
+
+    # trainset = dataset['train'] # for debug
+    # evalset = dataset['validation']
+    
+    # retriever = DenseRetrieval(
+    #     prediction_only=True,
+    #     args=args,
+    #     dataset=trainset,
+    #     evalset=evalset,
+    #     # num_neg=4,
+    #     tokenizer=tokenizer,
+    #     p_encoder=p_encoder_loaded,
+    #     q_encoder=q_encoder_loaded,
+    #     pre_encode_psg = f"passage_embedding_top{topk}.pt"
+    # )
+    # retriever.get_dense_embedding()
+    # df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+
+    # sparse
     retriever = SparseRetrieval(
         tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, bm25_type=data_args.bm25
     )
@@ -153,6 +196,8 @@ def run_sparse_retrieval(
             print("Done! similarity processing time :%d secs "%(int(end - start)))
         else:
             df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+
+            
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
