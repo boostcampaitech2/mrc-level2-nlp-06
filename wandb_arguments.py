@@ -8,7 +8,7 @@ class WandBArguments:
     중요 : 위 eval 점수는 단순히 reader의 점수이므로 리더보드의 점수와 다릅니다.
     """
     author: str = field(
-        default="SlaveOfBooDuck",
+        default="SongMinJae",
         metadata={
             "help": "(assential) identifier name"
         },

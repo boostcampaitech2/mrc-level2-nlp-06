@@ -5,12 +5,14 @@ import faiss
 import pickle
 import numpy as np
 import pandas as pd
+from torch.nn.functional import softmax
+from pathos.multiprocessing import ProcessingPool as Pool
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
 from typing import List, Tuple, NoReturn, Any, Optional, Union
-
-
+from transformers import AutoTokenizer
+import torch
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from datasets import (
@@ -19,12 +21,55 @@ from datasets import (
     concatenate_datasets,
 )
 
+import rank_bm25
+from utils.utils_dpr import get_dpr_score
 
 @contextmanager
 def timer(name):
     t0 = time.time()
     yield
     print(f"[{name}] done in {time.time() - t0:.3f} s")
+
+# for multi processing :(
+retriever = None 
+def par_search(queries, topk):
+    # pool.map may put only one argument. We need two arguments: datasets and topk.
+    def wrapper(query): 
+        rel_doc = retriever.get_relevant_doc(query, k = topk)
+        return rel_doc
+    pool = Pool()
+
+    pool.restart() 
+
+    rel_docs_score_indices = pool.map(wrapper, queries)
+    pool.close()
+    pool.join()
+
+    doc_scores = []
+    doc_indices = []
+    for s,idx in rel_docs_score_indices:
+        doc_scores.append( s )
+        doc_indices.append( idx )
+
+    return doc_scores, doc_indices
+
+
+
+class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 import BM250kapi"  
+                                   # and inherit BM250kapi directly, cannot save pickle.
+                                   # See https://stackoverflow.com/questions/1412787/picklingerror-cant-pickle-class-decimal-decimal-its-not-the-same-object
+    def __init__(self, corpus, tokenizer=None, k1=1.5, b=0.75, epsilon=0.25):
+            super().__init__(corpus, tokenizer=tokenizer, k1=k1, b=b, epsilon=epsilon)    
+    
+    def get_top_n(self, query, documents, n=5):
+        assert self.corpus_size == len(documents), "The documents given don't match the index corpus!"
+
+        scores = self.get_scores(query)
+
+        top_n_idx = np.argsort(scores)[::-1][:n]
+        doc_score = scores[top_n_idx]
+        
+        return doc_score, top_n_idx
 
 
 class SparseRetrieval:
@@ -33,6 +78,10 @@ class SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
+        is_bm25 = False,
+        k1=1.5, b=0.75, epsilon=0.25,
+        q_encoder = None,
+        p_encoder = None
     ) -> NoReturn:
 
         """
@@ -52,10 +101,13 @@ class SparseRetrieval:
 
             data_path/context_path가 존재해야합니다.
 
+            is_bm25:
+                유사도 랭킹을 bm25로 할것인지 결정합니다.
+
         Summary:
             Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
         """
-
+        self.tokenize_fn = tokenize_fn
         self.data_path = data_path
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
@@ -63,18 +115,29 @@ class SparseRetrieval:
         self.contexts = list(
             dict.fromkeys([v["text"] for v in wiki.values()])
         )  # set 은 매번 순서가 바뀌므로
-        print(f"Lengths of unique contexts : {len(self.contexts)}")
+        print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
-            tokenizer=tokenize_fn,
+            tokenizer=self.tokenize_fn,
             ngram_range=(1, 2),
             max_features=50000,
         )
-
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
         self.indexer = None  # build_faiss()로 생성합니다.
+
+        # Transform by bm25
+        self.bm25 = None
+        self.is_bm25 = is_bm25
+        self.k1 = k1
+        self.b = b
+        self.epsilon = epsilon
+
+        #encoder for dpr
+        self.q_encoder = q_encoder
+        self.p_encoder = p_encoder
+
 
     def get_sparse_embedding(self) -> NoReturn:
 
@@ -86,26 +149,48 @@ class SparseRetrieval:
         """
 
         # Pickle을 저장합니다.
-        pickle_name = f"sparse_embedding.bin"
-        tfidfv_name = f"tfidv.bin"
-        emd_path = os.path.join(self.data_path, pickle_name)
-        tfidfv_path = os.path.join(self.data_path, tfidfv_name)
+        if not self.is_bm25: # tfidf
+            pickle_name = f"sparse_embedding.bin"
+            tfidfv_name = f"tfidv.bin"
+            emd_path = os.path.join(self.data_path, pickle_name)
+            tfidfv_path = os.path.join(self.data_path, tfidfv_name)
 
-        if os.path.isfile(emd_path) and os.path.isfile(tfidfv_path):
-            with open(emd_path, "rb") as file:
-                self.p_embedding = pickle.load(file)
-            with open(tfidfv_path, "rb") as file:
-                self.tfidfv = pickle.load(file)
-            print("Embedding pickle load.")
-        else:
-            print("Build passage embedding")
-            self.p_embedding = self.tfidfv.fit_transform(self.contexts)
-            print(self.p_embedding.shape)
-            with open(emd_path, "wb") as file:
-                pickle.dump(self.p_embedding, file)
-            with open(tfidfv_path, "wb") as file:
-                pickle.dump(self.tfidfv, file)
-            print("Embedding pickle saved.")
+            if os.path.isfile(emd_path) and os.path.isfile(tfidfv_path):
+                with open(emd_path, "rb") as file:
+                    self.p_embedding = pickle.load(file)
+                with open(tfidfv_path, "rb") as file:
+                    self.tfidfv = pickle.load(file)
+                print("Embedding pickle load.")
+            else:
+                print("Build passage embedding")
+                self.p_embedding = self.tfidfv.fit_transform(self.contexts)
+                print(self.p_embedding.shape)
+                with open(emd_path, "wb") as file:
+                    pickle.dump(self.p_embedding, file)
+                with open(tfidfv_path, "wb") as file:
+                    pickle.dump(self.tfidfv, file)
+                print("Embedding pickle saved.")
+
+        else: # bm25
+            bm25_name = f"bm25.bin"
+            bm25_path = os.path.join(self.data_path, bm25_name)
+            if os.path.isfile(bm25_path):
+                with open(bm25_path, "rb") as file:
+                    self.bm25 = pickle.load(file)
+                print("Embedding bm25 pickle load.")
+            else:
+                print("Building bm25... It may take 1 minute and 30 seconds...")
+                # bm25 must tokenizer first 
+                # because it runs pool inside and this cuases unexpected result.
+                tokenized_corpus = []
+                for c in self.contexts:
+                    tokenized_corpus.append(self.tokenize_fn(c))
+                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
+                with open(bm25_path, "wb") as file:
+                    pickle.dump(self.bm25, file)
+                print("bm25 pickle saved.")
+
+        
 
     def build_faiss(self, num_clusters=64) -> NoReturn:
 
@@ -144,6 +229,54 @@ class SparseRetrieval:
             faiss.write_index(self.indexer, indexer_path)
             print("Faiss Indexer Saved.")
 
+    def retrieve_dpr(self, dataset, topk: Optional[int] = 20):
+        print("dpr mode!")
+        tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
+        dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer,self.p_encoder, self.q_encoder)
+
+        bm25_score = []
+        for query in dataset['question']:
+            tok_q = self.tokenize_fn(query)
+            bm25_score.append(self.bm25.get_scores(tok_q))
+        bm25_score = torch.tensor(np.array(bm25_score))
+        dpr_score = softmax(dpr_score,dim=1)
+        bm25_score = softmax(bm25_score,dim=1)
+
+        total_score = []
+        for idx in range(len(dataset['question'])):
+            total_score.append((dpr_score[idx]*0.2+bm25_score[idx]).tolist())
+        total_score = torch.tensor(np.array(total_score))
+        ranks = torch.argsort(total_score, dim=1, descending=True).squeeze()
+        context_list = []
+        for index in range(len(ranks)):
+            k_list = []
+            for i in range(topk):
+                k_list.append(self.contexts[ranks[index][i]])
+            context_list.append(k_list)
+                
+        total = []
+        for idx, example in enumerate(
+            tqdm(dataset, desc="Sparse retrieval: ")
+        ):
+            tmp = {
+                # Query와 해당 id를 반환합니다.
+                "question": example["question"],
+                "id": example["id"],
+                # Retrieve한 Passage의 id, context를 반환합니다.
+                "context_id": ranks[idx][:topk],
+                "context": " ".join(
+                    context_list[idx]
+                ),
+            }
+            # if "context" in example.keys() and "answers" in example.keys():
+            #     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+            #     tmp["original_context"] = example["context"]
+            #     tmp["answers"] = example["answers"]
+            total.append(tmp)
+
+        cqas = pd.DataFrame(total)
+        return cqas
+
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
@@ -168,8 +301,8 @@ class SparseRetrieval:
                 Ground Truth가 없는 Query (test) -> Retrieval한 Passage만 반환합니다.
         """
 
-        assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
-
+        assert self.p_embedding is not None or self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        
         if isinstance(query_or_dataset, str):
             doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
@@ -181,7 +314,6 @@ class SparseRetrieval:
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
@@ -210,6 +342,40 @@ class SparseRetrieval:
             cqas = pd.DataFrame(total)
             return cqas
 
+        # using parallel search, it tears the datsets to single example, which is dict type with keys
+        elif isinstance(query_or_dataset, dict):
+            # check for error in cases of wrong approach
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                doc_scores, doc_indices = self.get_relevant_doc(
+                    query_or_dataset["question"], k=topk
+                )
+            key1 = list(query_or_dataset.keys())[0]
+            assert isinstance(query_or_dataset[key1], str), "dict value is not str. Need to check if it might be a list. If so,\
+                                                            it looks like; title:[..., ...]. This may cause serious malfunctioning."
+            tmp = {
+                # Query와 해당 id를 반환합니다.
+                "question": query_or_dataset["question"],
+                "id": query_or_dataset["id"],
+                # Retrieve한 Passage의 id, context를 반환합니다.
+                "context_id": doc_indices,
+                "context": " ".join(
+                    [self.contexts[pid] for pid in doc_indices]
+                ),
+            }
+            total.append(tmp)
+
+            if "context" in query_or_dataset.keys() and "answers" in query_or_dataset.keys():
+                # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                tmp["original_context"] = query_or_dataset["context"]
+                tmp["answers"] = query_or_dataset["answers"]
+
+            cqas = pd.DataFrame(total)
+            return cqas
+        else: # Added this branch because parallel processing increases the risk of malfunctioning. 
+            raise Exception('The input is neither str, dataset, nor dict.')
+
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
         """
@@ -221,27 +387,35 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
+        if not self.is_bm25:
+            with timer("transform"):
+                query_vec = self.tfidfv.transform([query])
+            assert (
+                np.sum(query_vec) != 0
+            ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
-        with timer("transform"):
-            query_vec = self.tfidfv.transform([query])
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+            with timer("query ex search"):
+                result = query_vec * self.p_embedding.T
+            if not isinstance(result, np.ndarray):
+                result = result.toarray()
 
-        with timer("query ex search"):
-            result = query_vec * self.p_embedding.T
-        if not isinstance(result, np.ndarray):
-            result = result.toarray()
-
-        sorted_result = np.argsort(result.squeeze())[::-1]
-        doc_score = result.squeeze()[sorted_result].tolist()[:k]
-        doc_indices = sorted_result.tolist()[:k]
-        return doc_score, doc_indices
-
+            sorted_result = np.argsort(result.squeeze())[::-1]
+            doc_score = result.squeeze()[sorted_result].tolist()[:k]
+            doc_indices = sorted_result.tolist()[:k]
+            return doc_score, doc_indices
+        else: #bm25
+            try:
+                # query가 한개의 string이 아닐 때 에러가 나요.
+                tok_q = self.tokenize_fn(query)
+            except:
+                raise Exception("While processing bm25 with parallel serach, input is expected to be a single query, but somethong went wrong. Find this error in get_relevant_doc in retrieval.py")
+            doc_score, doc_indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
+            return doc_score, doc_indices
+        
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
+        
         """
         Arguments:
             queries (List):
@@ -251,22 +425,33 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
+        if not self.is_bm25:
+            query_vec = self.tfidfv.transform(queries)
+            assert (
+                np.sum(query_vec) != 0
+            ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
-        query_vec = self.tfidfv.transform(queries)
-        assert (
-            np.sum(query_vec) != 0
-        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+            result = query_vec * self.p_embedding.T
+            if not isinstance(result, np.ndarray):
+                result = result.toarray()
+            doc_scores = []
+            doc_indices = []
+            for i in range(result.shape[0]):
+                sorted_result = np.argsort(result[i, :])[::-1]
+                doc_scores.append(result[i, :][sorted_result].tolist()[:k])
+                doc_indices.append(sorted_result.tolist()[:k])
+            return doc_scores, doc_indices
+        else: #bm25
+            doc_scores = []
+            doc_indices = []
 
-        result = query_vec * self.p_embedding.T
-        if not isinstance(result, np.ndarray):
-            result = result.toarray()
-        doc_scores = []
-        doc_indices = []
-        for i in range(result.shape[0]):
-            sorted_result = np.argsort(result[i, :])[::-1]
-            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices.append(sorted_result.tolist()[:k])
-        return doc_scores, doc_indices
+            # parallel search
+            # 하나로 쪼개서 안에 들어가서 각각 토크나이즈를 한다.
+            global retriever
+            retriever = self
+            doc_scores, doc_indices = par_search(queries, k)
+
+            return doc_scores, doc_indices
 
     def retrieve_faiss(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1

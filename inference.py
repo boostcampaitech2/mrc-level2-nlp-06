@@ -3,12 +3,18 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 
 대부분의 로직은 train.py 와 비슷하나 retrieval, predict 부분이 추가되어 있습니다.
 """
-
+import os
+# multiprocessing을 사용하면 huggingface에서 이런 warning을 내뿜습니다: 
+# huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+# https://github.com/huggingface/transformers/issues/5486에 따르면 use case에 문제가 없으면 그냥 warning을 꺼도 된다고 합니다! 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import logging
 import sys
 from typing import Callable, List, Dict, NoReturn, Tuple
-
+from pathos.multiprocessing import ProcessingPool as Pool
+import pandas as pd
+import time
 import numpy as np
 
 from datasets import (
@@ -42,7 +48,6 @@ from arguments import (
 
 
 logger = logging.getLogger(__name__)
-
 
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
@@ -92,7 +97,8 @@ def main():
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
-
+    p_encoder = model_args.dpr_p_encoder_path
+    q_encoder = model_args.dpr_q_encoder_path
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_sparse_retrieval(
@@ -100,6 +106,8 @@ def main():
             datasets,
             training_args,
             data_args,
+            p_encoder= p_encoder,
+            q_encoder = p_encoder
         )
 
     # eval or predict mrc model
@@ -114,11 +122,17 @@ def run_sparse_retrieval(
     data_args: DataTrainingArguments,
     data_path: str = "../data",
     context_path: str = "wikipedia_documents.json",
+    p_encoder = None,
+    q_encoder = None
 ) -> DatasetDict:
+
+    # use global retriever for multi processing for BM25 
+    global retriever
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
+        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25,
+        p_encoder= p_encoder, q_encoder=q_encoder
     )
     retriever.get_sparse_embedding()
 
@@ -128,8 +142,22 @@ def run_sparse_retrieval(
             datasets["validation"], topk=data_args.top_k_retrieval
         )
     else:
-        df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-
+        # if bm25, parallel is faster. ELSE, numpy in TFIDF outperforms the parallel. :/
+        if data_args.bm25:
+            start = time.time()
+            print("Calculating BM25 similarity...")
+            if data_args.dpr : # dpr + bm25 
+                df = retriever.retrieve_dpr(
+                    datasets["validation"], topk=data_args.top_k_retrieval
+                )
+            else:
+                df = retriever.retrieve(
+                    datasets["validation"], topk=data_args.top_k_retrieval
+                )
+            end = time.time()
+            print("Done! similarity processing time :%d secs "%(int(end - start)))
+        else:
+            df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
