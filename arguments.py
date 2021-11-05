@@ -98,4 +98,7 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Run bm25 for default retrival"}
     )
-    
+    dpr: bool = field(
+        default=True,
+        metadata={"help": "Run dpr+bm25 for default retrival"}
+    )
