@@ -16,6 +16,7 @@ from pathos.multiprocessing import ProcessingPool as Pool
 import pandas as pd
 import time
 import numpy as np
+import pickle
 
 from datasets import (
     load_metric,
@@ -40,6 +41,7 @@ from transformers import (
 from utils_qa import postprocess_qa_predictions, check_no_error
 from trainer_qa import QuestionAnsweringTrainer
 from retrieval import SparseRetrieval
+from dense_retrieval import DenseRetrieval
 
 from arguments import (
     ModelArguments,
@@ -102,6 +104,7 @@ def main():
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_sparse_retrieval(
+            tokenizer,
             tokenizer.tokenize,
             datasets,
             training_args,
@@ -116,6 +119,7 @@ def main():
 
 
 def run_sparse_retrieval(
+    tokenizer,  
     tokenize_fn: Callable[[str], List[str]],
     datasets: DatasetDict,
     training_args: TrainingArguments,
@@ -130,11 +134,23 @@ def run_sparse_retrieval(
     global retriever
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
-    retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25,
-        p_encoder= p_encoder, q_encoder=q_encoder, use_wiki_preprocessing=data_args.use_wiki_preprocessing
-    )
-    retriever.get_sparse_embedding()
+    if not data_args.dpr_negative:
+        retriever = SparseRetrieval(
+            tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25,
+            p_encoder= p_encoder, q_encoder=q_encoder, use_wiki_preprocessing=data_args.use_wiki_preprocessing
+        )
+        retriever.get_sparse_embedding()
+    else:
+        retriever = DenseRetrieval(tokenize_fn=tokenize_fn, data_path = data_path, 
+                                context_path = context_path, dataset_path=data_path+"/train_dataset", 
+                                tokenizer=tokenizer, train_data=datasets["validation"], 
+                                num_neg=12, is_bm25=data_args.bm25)
+
+        model_checkpoint = "klue/bert-base"
+        retriever.load_model(model_checkpoint, "outputs/dpr/p_encoder_14.pt", "outputs/dpr/q_encoder_14.pt")
+        retriever.get_dense_embedding()
+        # with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
+        #     retriever.dense_p_embedding = pickle.load(f)
 
     if data_args.use_faiss:
         retriever.build_faiss(num_clusters=data_args.num_clusters)

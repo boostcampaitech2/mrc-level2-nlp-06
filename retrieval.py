@@ -209,7 +209,7 @@ class SparseRetrieval:
                 # bm25 must tokenizer first 
                 # because it runs pool inside and this cuases unexpected result.
                 tokenized_corpus = []
-                for c in self.contexts:
+                for c in tqdm(self.contexts):
                     tokenized_corpus.append(self.tokenize_fn(c))
                 self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
@@ -644,6 +644,7 @@ if __name__ == "__main__":
         tokenize_fn=tokenizer.tokenize,
         data_path=args.data_path,
         context_path=args.context_path,
+        is_bm25=True
     )
 
     query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
