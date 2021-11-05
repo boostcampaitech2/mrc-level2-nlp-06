@@ -125,3 +125,7 @@ class DataTrainingArguments:
         metadata={"help": "Run dpr+bm25 for default retrival"}
     )
 
+    dpr_negative: bool = field(
+        default=False,
+        metadata={"help": "Run DenseRetrieval.py with negative sample"}
+    )
