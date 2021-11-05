@@ -94,8 +94,16 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
-    bm25: bool = field(
-        default=True,
-        metadata={"help": "Run bm25 for default retrival"}
+    bm25: str = field(
+        default="OurBm25",
+        metadata={"help": "Run bm25 for default retrival. Optoins: OurBm25Plus, OurBm25L, OurBm25. Empty string "" to use TFIDF"}
     )
-    
+    bm25_tokenizer: str = field(
+        default="klue/bert-base",
+        metadata={"help": "Run bm25 with chosen tokenizer. You may use any huggingface tokenizer such as klue/bert-base or xlm-bert-large etc..."}
+    )
+    # bm25 종류와 tokenizer에 대한 성능 표기: (1,2,3) 종류가 있음.
+    # 1. topk가 5이하일 때 bm25 electra가 제일 좋다. (1)
+    # 2. topk가 10일때 bm25 bert가 제일 좋다.(2)
+    # 3. topk가 20일 때 bm25Plus bert가 제일 좋다.(3)
+    # 4. topk가 30이상일 때 bm25 bert가 제일 좋다.(2)

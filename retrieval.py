@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from pathos.multiprocessing import ProcessingPool as Pool
+import pathos as pa
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
@@ -21,7 +22,7 @@ from datasets import (
     concatenate_datasets,
 )
 
-import rank_bm25
+from bm25 import OurBm25, OurBm25L, OurBm25Plus
 
 @contextmanager
 def timer(name):
@@ -32,7 +33,8 @@ def timer(name):
 # for multi processing :(
 retriever = None 
 
-def par_search(queries, topk):
+def parallel_bm25_search(queries, topk):
+    print("parallel bm25 search start with num worker = ",pa.helpers.cpu_count())
     # pool.map may put only one argument. We need two arguments: datasets and topk.
     def wrapper(query): 
         rel_doc = retriever.get_relevant_doc(query, k = topk)
@@ -53,24 +55,7 @@ def par_search(queries, topk):
         doc_indices.append( idx )
 
     return doc_scores, doc_indices
-
-
-class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 import BM250kapi"  
-                                   # and inherit BM250kapi directly, cannot save pickle.
-                                   # See https://stackoverflow.com/questions/1412787/picklingerror-cant-pickle-class-decimal-decimal-its-not-the-same-object
-    def __init__(self, corpus, tokenizer=None, k1=1.5, b=0.75, epsilon=0.25):
-            super().__init__(corpus, tokenizer=tokenizer, k1=k1, b=b, epsilon=epsilon)    
     
-    def get_top_n(self, query, documents, n=5):
-        assert self.corpus_size == len(documents), "The documents given don't match the index corpus!"
-
-        scores = self.get_scores(query)
-
-        top_n_idx = np.argsort(scores)[::-1][:n]
-        doc_score = scores[top_n_idx]
-        
-        return doc_score, top_n_idx
-
 
 class SparseRetrieval:
     def __init__(
@@ -78,7 +63,7 @@ class SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
-        is_bm25 = False,
+        bm25_type = None,
         k1=1.5, b=0.75, epsilon=0.25
     ) -> NoReturn:
 
@@ -99,7 +84,7 @@ class SparseRetrieval:
 
             data_path/context_path가 존재해야합니다.
 
-            is_bm25:
+            bm25_type:
                 유사도 랭킹을 bm25로 할것인지 결정합니다.
 
         Summary:
@@ -127,7 +112,7 @@ class SparseRetrieval:
 
         # Transform by bm25
         self.bm25 = None
-        self.is_bm25 = is_bm25
+        self.bm25_type = bm25_type
         self.k1 = k1
         self.b = b
         self.epsilon = epsilon
@@ -142,7 +127,8 @@ class SparseRetrieval:
         """
 
         # Pickle을 저장합니다.
-        if not self.is_bm25: # tfidf
+        if not self.bm25_type: # tfidf
+            print("embedding tfidf")
             pickle_name = f"sparse_embedding.bin"
             tfidfv_name = f"tfidv.bin"
             emd_path = os.path.join(self.data_path, pickle_name)
@@ -165,20 +151,39 @@ class SparseRetrieval:
                 print("Embedding pickle saved.")
 
         else: # bm25
-            bm25_name = f"bm25.bin"
+            print("embedding bm25")
+            assert self.bm25_type in ["OurBm25Plus", "OurBm25L", "OurBm25"], f"You put {self.bm25_type} bm25_type string must be either OurBm25Plus, OurBm25L, or OurBm25. Make sure the Case of letters. "
+
+            ## name of the tokenier
+            # tokenizer.tokenize().__dict__['name_or_path']
+            # 함수에서 instance을 빼내는 __self__
+            # instance에서 attribute을 빼내는 __dict__
+            tokenizer_name = self.tokenize_fn.__self__.__dict__['name_or_path']
+
+            # if klue/bert-base, take only bert-base since "/" char is misintereted as a directory
+            tokenizer_name = tokenizer_name.split("/")[-1]
+
+            bm25_name = f"{self.bm25_type}_{tokenizer_name}.bin"
             bm25_path = os.path.join(self.data_path, bm25_name)
-            if os.path.isfile(bm25_path):
+            try: # if file exists
                 with open(bm25_path, "rb") as file:
                     self.bm25 = pickle.load(file)
-                print("Embedding bm25 pickle load.")
-            else:
-                print("Building bm25... It may take 1 minute and 30 seconds...")
+                print(f"Embedding {bm25_name} pickle load.")
+            except:
+                    
+            # else:
+                print(f"Building {self.bm25_name}... It may take minutes...")
                 # bm25 must tokenizer first 
-                # because it runs pool inside and this cuases unexpected result.
+                # unless this cuases unexpected result because it runs pool inside.
                 tokenized_corpus = []
                 for c in self.contexts:
                     tokenized_corpus.append(self.tokenize_fn(c))
-                self.bm25 = MyBm25(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
+
+                # get one of the bm25 versions
+                module = __import__("bm25")
+                bm25_class = getattr(module, self.bm25_type)
+
+                self.bm25 = bm25_class(tokenized_corpus, k1 = self.k1, b = self.b, epsilon=self.epsilon)
                 with open(bm25_path, "wb") as file:
                     pickle.dump(self.bm25, file)
                 print("bm25 pickle saved.")
@@ -334,7 +339,7 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
-        if not self.is_bm25:
+        if not self.bm25_type:
             with timer("transform"):
                 query_vec = self.tfidfv.transform([query])
             assert (
@@ -372,7 +377,7 @@ class SparseRetrieval:
         Note:
             vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
         """
-        if not self.is_bm25:
+        if not self.bm25_type:
             query_vec = self.tfidfv.transform(queries)
             assert (
                 np.sum(query_vec) != 0
@@ -396,7 +401,8 @@ class SparseRetrieval:
             # 하나로 쪼개서 안에 들어가서 각각 토크나이즈를 한다.
             global retriever
             retriever = self
-            doc_scores, doc_indices = par_search(queries, k)
+
+            doc_scores, doc_indices = parallel_bm25_search(queries, k)
 
             return doc_scores, doc_indices
 
@@ -552,7 +558,6 @@ if __name__ == "__main__":
     )  # train dev 를 합친 4192 개 질문에 대해 모두 테스트
     print("*" * 40, "query dataset", "*" * 40)
     print(full_ds)
-
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -564,8 +569,9 @@ if __name__ == "__main__":
         tokenize_fn=tokenizer.tokenize,
         data_path=args.data_path,
         context_path=args.context_path,
+        bm25_type = "OurBm25"
     )
-
+    retriever.get_sparse_embedding()
     query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
 
     if args.use_faiss:
