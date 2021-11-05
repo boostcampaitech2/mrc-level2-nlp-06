@@ -1,6 +1,20 @@
-from transformers import BertModel, BertTokenizerFast, AutoModel
+from transformers import BertModel, BertTokenizerFast, AutoModel, set_seed
 from transformers.modeling_outputs import QuestionAnsweringModelOutput
 from torch import nn
+import pandas as pd
+import torch
+import numpy as np
+import random
+import os
+
+def seed_everything(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)  # type: ignore
+    torch.backends.cudnn.deterministic = True  # type: ignore
+    torch.backends.cudnn.benchmark = True  # type: ignore
 
 # base code from...
 # https://stackoverflow.com/questions/65205582/how-can-i-add-a-bi-lstm-layer-on-top-of-bert-model?rq=1
@@ -103,14 +117,17 @@ class BERT_QA(nn.Module):
 
 
 class BERT_LSTM(nn.Module):
-    def __init__(self, model_name, num_layer, dropout = 0):
+    def __init__(self, arg, model_name, num_layer, hidden_dim = 256, dropout = 0):
+        # set_seed(arg.seed)
+        # seed_everything(arg.seed)
         super(BERT_LSTM, self).__init__()
         self.backbone = AutoModel.from_pretrained(model_name)
         
         ### New layers:
-        self.HIDDEN_DIM = 256
+        self.HIDDEN_DIM = hidden_dim
 
-        self.lstm = nn.LSTM(self.backbone.config.hidden_size, self.HIDDEN_DIM, batch_first=True,bidirectional=True, num_layers=num_layer, dropout = dropout)
+        # self.lstm = nn.LSTM(self.backbone.config.hidden_size, self.HIDDEN_DIM, batch_first=True,bidirectional=True, num_layers=10, dropout = 0.7)
+        self.lstm = nn.LSTM(self.backbone.config.hidden_size, self.HIDDEN_DIM, batch_first=True,bidirectional=True, num_layers=num_layer)#, dropout = dropout)
         self.qa_outputs = nn.Linear(self.HIDDEN_DIM * 2, 2) # * 2 concat bidirection lstm hidden state
 
           

@@ -7,7 +7,9 @@ import dataclasses
 from datasets import load_metric, load_from_disk, Dataset, DatasetDict, Features, Value, Sequence
 from utils.postprocess import post_processing_fuction_with_setting
 from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
-
+import random
+import numpy as np
+import torch
 from transformers import (
     DataCollatorWithPadding,
     EvalPrediction,
@@ -42,7 +44,6 @@ from bert_lstm import BERT_LSTM, BERT_QA
 def main():
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
-    
 
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments,WandBArguments)
@@ -85,7 +86,6 @@ def main():
         if model_args.config_name is not None
         else model_args.model_name_or_path,
     )
-    # print(config)
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name
         if model_args.tokenizer_name is not None
@@ -101,9 +101,8 @@ def main():
         config=config,
     )
 
-    # model = BERT_LSTM(model_args.model_name_or_path) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
+    model = BERT_LSTM(training_args, model_args.model_name_or_path,2, hidden_dim = 768, dropout = 0) # 사용하려는 backbone 모델과 tokenizer 동일하게 유지해야 합니다. 현재 상태에서 argparser에 넣을 모델 이름을 backbone 모델로 주면 됩니다
     print(model)
-    # print(list(model.parameters()))
     # print(
     #     type(training_args),
     #     type(model_args),
@@ -190,10 +189,6 @@ def run_mrc(
         compute_metrics=compute_metrics,
     )
 
-    # debug
-    # trainer.evaluate()
-    # return
-
     # Training
     if training_args.do_train:
         if last_checkpoint is not None:
@@ -241,4 +236,3 @@ def run_mrc(
 
 if __name__ == "__main__":
     main()
-    #  python train.py --output_dir ./outputs/roberta-large-512 --do_train --do_eval --num_train_epochs 30 --model_name_or_path klue/bert-base --eval_steps 100 --evaluation_strategy steps --overwrite_output_dir --save_total_limit 3 --load_best_model_at_end
