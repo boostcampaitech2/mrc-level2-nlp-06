@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pickle
 from tqdm import tqdm, trange
 from typing import List, Tuple, NoReturn, Any, Optional, Union
 
@@ -11,12 +12,31 @@ from transformers import AutoTokenizer, BertModel, BertPreTrainedModel, AdamW, T
 from datasets import Dataset, load_from_disk, concatenate_datasets
 
 from retrieval import SparseRetrieval, timer
+from pathos.multiprocessing import ProcessingPool as Pool
 
+retriever = None 
+def par_search(queries, topk):
+    # pool.map may put only one argument. We need two arguments: datasets and topk.
+    def wrapper(query): 
+        tok_q = retriever.tokenize_fn(query)
+        doc_score, doc_indices = retriever.bm25.get_top_n(tok_q, retriever.contexts, n = topk)
+        return doc_score, doc_indices
+    pool = Pool()
+    pool.restart() 
+    rel_docs_score_indices = pool.map(wrapper, queries)
+    pool.close()
+    pool.join()
+
+    doc_scores = []
+    doc_indices = []
+    for s,idx in rel_docs_score_indices:
+        doc_scores.append( s )
+        doc_indices.append( idx )
+    return doc_scores, doc_indices
 
 class BertEncoder(BertPreTrainedModel):
   def __init__(self, config):
     super(BertEncoder, self).__init__(config)
-
     self.bert = BertModel(config)
     self.init_weights()
       
@@ -32,21 +52,21 @@ class BertEncoder(BertPreTrainedModel):
 class DenseRetrieval(SparseRetrieval):
     """ SparseRetreival을 활용해, 메소드를 DenseRetrieval에 맞춰 오버라이딩
         기존에서 p_embedding, contexts, tfidfv를 가져옵니다.
+        arguments: train_data: 기존 wiki데이터가 아닌 특정데이터를 활용할때 추가
     """
-    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer):
-        super().__init__(tokenize_fn, data_path, context_path)
+    def __init__(self, tokenize_fn, data_path, context_path, dataset_path, tokenizer, train_data, num_neg, is_bm25=False, wandb=False):
+        super().__init__(tokenize_fn, data_path, context_path, is_bm25=False)
+        self.is_bm25 = is_bm25
         self.org_dataset = load_from_disk(dataset_path)
-        self.full_ds = concatenate_datasets([
-                self.org_dataset["train"].flatten_indices(),
-                self.org_dataset["validation"].flatten_indices(),
-                ])
-        self.get_sparse_embedding() 
-        self.num_neg = 3
+        self.train_data = train_data
+        self.num_neg = num_neg
         self.p_with_neg = []
         self.p_encoder = None
         self.q_encoder = None
         self.dense_p_embedding = []
         self.tokenizer = tokenizer
+        self.wandb = wandb
+        self.get_sparse_embedding() 
     
     def get_topk_similarity(self, qeury_vec, k):
         result = qeury_vec * self.p_embedding.T
@@ -83,32 +103,50 @@ class DenseRetrieval(SparseRetrieval):
 
         return doc_scores3, doc_indices3
 
-    def make_train_data(self, tokenizer, data):
+    def make_train_data(self, tokenizer):
         """ Note: Dense Embedding학습을 하기 위한 데이터셋을 만듭니다. """
         print("make_train_data...")
         corpus = np.array(self.contexts)
-        query_vec = self.tfidfv.transform(self.full_ds['context'])
-        doc_scores, doc_indices = self.get_topk_similarity(query_vec, self.num_neg*10)
+        queries = self.train_data['question']
+        top_k = self.num_neg * 10
+
+        if self.is_bm25==True:
+            global retriever
+            retriever = self
+            doc_scores, doc_indices = par_search(queries, top_k)
+        else:
+            query_vec = self.tfidfv.transform(queries)
+            doc_scores, doc_indices = self.get_topk_similarity(query_vec, top_k)
+
         neg_idxs = []
         for idx, ind in enumerate(tqdm(doc_indices)): # 4000
             neg_idx = []
-            for i in range(len(ind)): # k=4
-                if not self.contexts[ind[i]][:200] in self.full_ds['context'][idx]:
+            for i in range(len(ind)): # 2~20 find negative
+                if not self.contexts[ind[i]][:10] in self.train_data['context'][idx]:
                     neg_idx.append(ind[i])
                 if len(neg_idx)==self.num_neg: break
             neg_idxs.append(neg_idx)
 
-        for idx, c in enumerate(tqdm(self.full_ds['context'])):
+        with open('./data/neg_idxs.pickle', "wb") as f:
+            pickle.dump(neg_idxs, f)
+
+        print(neg_idxs)
+        for idx, c in enumerate(tqdm(self.train_data['context'])):
             p_neg = corpus[neg_idxs[idx]]
             self.p_with_neg.append(c)
             self.p_with_neg.extend(p_neg)
 
+        with open('./data/p_with_neg.pickle', "wb") as f:
+            pickle.dump(self.p_with_neg, f)
+        
+        print(self.p_with_neg)
+        print(self.train_data['question'][0])
         print('[Positive context]')
-        print(self.p_with_neg[4], '\n')
+        print(self.p_with_neg[0], '\n')
         print('[Negative context]')
-        print(self.p_with_neg[5], '\n', self.p_with_neg[6])
+        print(self.p_with_neg[1], '\n', self.p_with_neg[2])
 
-        q_seqs = tokenizer(self.full_ds['question'], padding="max_length", truncation=True, return_tensors='pt')
+        q_seqs = tokenizer(self.train_data['question'], padding="max_length", truncation=True, return_tensors='pt')
         p_seqs = tokenizer(self.p_with_neg, padding="max_length", truncation=True, return_tensors='pt')
 
         max_len = p_seqs['input_ids'].size(-1)
@@ -119,8 +157,18 @@ class DenseRetrieval(SparseRetrieval):
         print(p_seqs['input_ids'].size())  #(num_example, pos + neg, max_len)
         train_dataset = TensorDataset(p_seqs['input_ids'], p_seqs['attention_mask'], p_seqs['token_type_ids'], 
                                 q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids'])                
+
+        with open('./data/dense_train_data.pickle', "wb") as f:
+            pickle.dump(train_dataset, f)
+
         return train_dataset
 
+    def load_train_data(self):
+        """미리 생성된 Dense Embedding 모델학습용 데이터를 불러옵니다."""
+        with open("./data/dense_train_data.pickle", "rb") as f:
+            train_dataset = pickle.load(f)
+        return train_dataset
+        
     def init_model(self, model_checkpoint):
         """ Encoder 모델을 생성해 줍니다."""
         print("init_model...")
@@ -182,7 +230,7 @@ class DenseRetrieval(SparseRetrieval):
                 q_outputs = self.q_encoder(**q_inputs)  #(batch_size*, emb_dim)
 
                 # Calculate similarity score & loss
-                p_outputs = p_outputs.view(args.per_device_train_batch_size, -1, self.num_neg+1)
+                p_outputs = torch.transpose(p_outputs.view(args.per_device_train_batch_size, self.num_neg+1, -1), 1, 2)
                 q_outputs = q_outputs.view(args.per_device_train_batch_size, 1, -1)
 
                 sim_scores = torch.bmm(q_outputs, p_outputs).squeeze()  #(batch_size, self.num_neg+1)
@@ -200,8 +248,17 @@ class DenseRetrieval(SparseRetrieval):
                 global_step += 1
                 torch.cuda.empty_cache()
 
-            torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pt")
-            torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pt")
+            # wandb.log
+            if self.wandb==True:
+                self.get_dense_embedding()
+                topK_list = [1,10,20,50]
+                result_train = self.topk_experiment(topK_list, self.org_dataset['train'], datatset_name="train")
+                result_valid = self.topk_experiment(topK_list, self.org_dataset['validation'], datatset_name="valid")
+                result_train.update(result_valid)
+                wandb.log(result_train)
+
+            torch.save(self.p_encoder.state_dict(), f"./outputs/dpr/p_encoder_{epoch}.pt")
+            torch.save(self.q_encoder.state_dict(), f"./outputs/dpr/q_encoder_{epoch}.pt")
         return self.p_encoder, self.q_encoder
 
     def load_model(self, model_checkpoint, p_path, q_path):
@@ -226,6 +283,10 @@ class DenseRetrieval(SparseRetrieval):
                     p_emb = p_emb.to('cpu').numpy()
                     p_embs.append(p_emb)
             self.dense_p_embedding = torch.Tensor(p_embs).reshape(-1,768)
+
+        with open("./data/dense_embedding.bin", "wb") as f:
+            pickle.dump(self.dense_p_embedding, f)
+
         torch.cuda.empty_cache()
         print("get_dense_embedding finished...")
 
@@ -245,11 +306,10 @@ class DenseRetrieval(SparseRetrieval):
 
         # 2. 생성된 embedding에 dot product를 수행 => Document들의 similarity ranking을 구함
         dot_prod_scores = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))
-        rank = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()
-        #print('dot_prod_scores: ', dot_prod_scores)
-        #print('rank: ',rank)
+        indices = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()[:k]
+        score = dot_prod_scores.squeeze()[indices].tolist()[:k]
         torch.cuda.empty_cache()
-        return dot_prod_scores[0], rank
+        return score, indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1) -> Tuple[List, List]:
         """ 메소드 오버라이딩. Dataset형태로 queries가 들어오는 경우 수행 구현 필요"""
@@ -257,7 +317,7 @@ class DenseRetrieval(SparseRetrieval):
         result = []
         with torch.no_grad():
             self.q_encoder.eval()
-            for batch in tqdm(dataloader):    
+            for batch in tqdm(dataloader):
                 q_seqs_val = self.tokenizer(batch, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
                 q_emb = self.q_encoder(**q_seqs_val).to('cpu')            
                 res = torch.matmul(q_emb, torch.transpose(self.dense_p_embedding, 0, 1))#.numpy() # 32, 56000
@@ -277,7 +337,7 @@ class DenseRetrieval(SparseRetrieval):
         torch.cuda.empty_cache()
         return doc_scores, doc_indices
 
-    def topk_experiment(self, topK_list, dataset):
+    def topk_experiment(self, topK_list, dataset, datatset_name="train"):
         """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
         result_dict = {}
         for topK in tqdm(topK_list):
@@ -286,10 +346,30 @@ class DenseRetrieval(SparseRetrieval):
             for index in tqdm(range(len(result_retriever)), desc="topk_experiment"):
                 if  result_retriever['original_context'][index][:200] in result_retriever['context'][index]:
                     correct += 1
-            result_dict[topK] = correct/len(result_retriever)
+            result_dict[datatset_name + "_topk_" + str(topK)] = correct/len(result_retriever)
         return result_dict
 
+
 if __name__=="__main__":
+
+    import wandb
+    from arguments import (ModelArguments, DataTrainingArguments)
+    from wandb_arguments import WandBArguments
+    from transformers import HfArgumentParser, set_seed
+    from utils.init_wandb import wandb_args_init
+
+    wandb.login()
+    print(WandBArguments)
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, WandBArguments))
+    model_args, data_args,wandb_args = parser.parse_args_into_dataclasses()
+    wandb_args= wandb_args_init(wandb_args, model_args)
+    wandb.init(project=wandb_args.project,
+                entity=wandb_args.entity,
+                name=wandb_args.name,
+                tags=wandb_args.tags,
+                group=wandb_args.group,
+                notes=wandb_args.notes)
+
     data_path  = "../data/"
     dataset_path = "../data/train_dataset"
     context_path = "wikipedia_documents.json"
@@ -302,32 +382,39 @@ if __name__=="__main__":
         ])
 
     tokenizer = AutoTokenizer.from_pretrained(model_checkpoint,use_fast=False,)
-    dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, context_path = context_path, dataset_path=dataset_path, tokenizer=tokenizer)
+    dense_retriever = DenseRetrieval(tokenize_fn=tokenizer.tokenize, data_path = data_path, 
+                                    context_path = context_path, dataset_path=dataset_path, 
+                                    tokenizer=tokenizer, train_data=org_dataset['train'], 
+                                    num_neg=12, is_bm25=True, wandb=True)
 
     args = TrainingArguments(
         output_dir="dense_retireval",
         evaluation_strategy="epoch",
-        learning_rate=2e-5,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        num_train_epochs=30,
+        learning_rate=8e-6,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
+        num_train_epochs=15,
         weight_decay=0.01,
     )
+
     ## 학습과정 ##
-    # train_dataset = dense_retriever.make_train_data(tokenizer)
-    # dense_retriever.init_model(model_checkpoint)
-    # dense_retriever.train(args, train_dataset)
+    train_dataset = dense_retriever.make_train_data(tokenizer) # 한번 실행후 생략
+    train_dataset = dense_retriever.load_train_data()
+    dense_retriever.init_model(model_checkpoint)
+    dense_retriever.train(args, train_dataset)
 
     ## 추론준비 ##
-    dense_retriever.load_model(model_checkpoint, "outputs/p_encoder_1.pt", "outputs/q_encoder_1.pt")
+    # dense_retriever.load_model(model_checkpoint, "data/p_encoder_14.pt", "data/q_encoder_14.pt")
     dense_retriever.get_dense_embedding()
+    # with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
+    #     dense_retriever.dense_p_embedding = pickle.load(f)
 
     ## 추론 ##
     for i in range(10):
-        df = dense_retriever.retrieve(full_ds[i]['question'], topk=3)
+        df = dense_retriever.retrieve(org_dataset['validation'][i]['question'], topk=3)
         print(df)
 
     ## topk 출력 ##
-    topK_list = [1,10,20]
-    result = dense_retriever.topk_experiment(topK_list, org_dataset["validation"])
+    topK_list = [1,10,20,50]
+    result = dense_retriever.topk_experiment(topK_list, org_dataset['train'])
     print(result)
