@@ -32,10 +32,10 @@ def timer(name):
 
 # for multi processing :(
 retriever = None 
-def par_score(queries, topk):
+def par_search(queries, topk):
     # pool.map may put only one argument. We need two arguments: datasets and topk.
     def wrapper(query): 
-        rel_doc = retriever.get_relevant_doc_dpr(query, k = topk)
+        rel_doc = retriever.get_relevant_doc(query, k = topk)
         return rel_doc
     pool = Pool()
 
