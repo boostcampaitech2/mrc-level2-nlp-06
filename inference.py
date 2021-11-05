@@ -97,7 +97,8 @@ def main():
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
-
+    p_encoder = model_args.dpr_p_encoder_path
+    q_encoder = model_args.dpr_q_encoder_path
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_sparse_retrieval(
@@ -105,6 +106,8 @@ def main():
             datasets,
             training_args,
             data_args,
+            p_encoder= p_encoder,
+            q_encoder = p_encoder
         )
 
     # eval or predict mrc model
@@ -119,6 +122,8 @@ def run_sparse_retrieval(
     data_args: DataTrainingArguments,
     data_path: str = "../data",
     context_path: str = "wikipedia_documents.json",
+    p_encoder = None,
+    q_encoder = None
 ) -> DatasetDict:
 
     # use global retriever for multi processing for BM25 
@@ -126,7 +131,8 @@ def run_sparse_retrieval(
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     retriever = SparseRetrieval(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25, use_wiki_preprocessing=data_args.use_wiki_preprocessing
+        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path, is_bm25=data_args.bm25,
+        p_encoder= p_encoder, q_encoder=q_encoder, use_wiki_preprocessing=data_args.use_wiki_preprocessing
     )
     retriever.get_sparse_embedding()
 
@@ -140,9 +146,14 @@ def run_sparse_retrieval(
         if data_args.bm25:
             start = time.time()
             print("Calculating BM25 similarity...")
-            df = retriever.retrieve(
-                datasets["validation"], topk=data_args.top_k_retrieval
-            )
+            if data_args.dpr : # dpr + bm25 
+                df = retriever.retrieve_dpr(
+                    datasets["validation"], topk=data_args.top_k_retrieval
+                )
+            else:
+                df = retriever.retrieve(
+                    datasets["validation"], topk=data_args.top_k_retrieval
+                )
             end = time.time()
             print("Done! similarity processing time :%d secs "%(int(end - start)))
         else:

@@ -9,7 +9,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="klue/bert-base",
+        default="klue/roberta-large",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         },
@@ -31,6 +31,18 @@ class ModelArguments:
         metadata={"help": "resume checkout"}
     ) 
 
+    dpr_q_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
+    dpr_p_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -86,7 +98,7 @@ class DataTrainingArguments:
         default=64, metadata={"help": "Define how many clusters to use for faiss."}
     )
     top_k_retrieval: int = field(
-        default=1,
+        default=20,
         metadata={
             "help": "Define how many top-k passages to retrieve based on similarity."
         },
@@ -106,3 +118,7 @@ class DataTrainingArguments:
         },
     )
     
+    dpr: bool = field(
+        default=True,
+        metadata={"help": "Run dpr+bm25 for default retrival"}
+    )
