@@ -81,6 +81,7 @@ class SparseRetrieval:
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
         is_bm25 = False,
+        use_wiki_preprocessing = False,
         k1=1.5, b=0.75, epsilon=0.25
     ) -> NoReturn:
 
@@ -119,7 +120,8 @@ class SparseRetrieval:
         self.ids = list(range(len(self.contexts)))
 
         # wiki 전처리
-        # self.contexts = preprocess_wiki_documents(self.contexts)
+        if use_wiki_preprocessing:
+            self.contexts = preprocess_wiki_documents(self.contexts)
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
