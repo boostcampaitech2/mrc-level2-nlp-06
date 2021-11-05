@@ -1,7 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 @dataclass
 class ModelArguments:
     """
@@ -124,8 +123,12 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Run dpr+bm25 for default retrival"}
     )
-
     dpr_negative: bool = field(
         default=False,
         metadata={"help": "Run DenseRetrieval.py with negative sample"}
     )
+    elastic_score: bool = field(
+        default = True,
+        metadata={"help": "whether to score to top_k of each query"}
+    )
+

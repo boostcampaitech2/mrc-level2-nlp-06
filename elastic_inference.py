@@ -89,7 +89,7 @@ def main():
     dataset = load_from_disk('/opt/ml/data/test_dataset')
 
     # score도 구하고 싶으면 score = True
-    datasets = elastic_search_retrieval(topk, es, dataset, True)
+    datasets = elastic_search_retrieval(topk, es, dataset, data_args.elastic_score)
     if not os.path.isfile("/opt/ml/data/elastic_score.bin"):
         bin_save("/opt/ml/data/elastic.bin", datasets)
 
