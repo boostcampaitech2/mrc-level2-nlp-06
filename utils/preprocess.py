@@ -226,6 +226,19 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         dataset_list.append(eval_dataset)
     return dataset_list, answer_column_name
 
+<<<<<<< HEAD
+def wiki_preprocess(data_dict):
+            text = data_dict["text"]
+            text = re.sub(r'\n', ' ', text)
+            text = re.sub(r"\\n", " ", text)
+            text = re.sub(r'\\n\\n', ' ', text)
+            text = re.sub(r'\n\n', " ", text)
+            text = re.sub(r"\s+", " ", text)
+            text = re.sub(r'#', ' ', text)
+            data_dict["text"] = text
+            return data_dict
+=======
+>>>>>>> ec726e10f91e688b7168de36bf93e0371d644ff8
 
 def preprocess_wiki_documents(contexts):
 
@@ -337,4 +350,8 @@ def preprocess_wiki_documents(contexts):
             pop_true = False
 
 
+<<<<<<< HEAD
     return temp_context
+=======
+    return temp_context
+>>>>>>> ec726e10f91e688b7168de36bf93e0371d644ff8
