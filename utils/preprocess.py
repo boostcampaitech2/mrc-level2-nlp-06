@@ -1,3 +1,4 @@
+import re
 
 def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length):        
     if training_args.do_train:
@@ -220,3 +221,13 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         dataset_list.append(eval_dataset)
     return dataset_list, answer_column_name
 
+def wiki_preprocess(data_dict):
+            text = data_dict["text"]
+            text = re.sub(r'\n', ' ', text)
+            text = re.sub(r"\\n", " ", text)
+            text = re.sub(r'\\n\\n', ' ', text)
+            text = re.sub(r'\n\n', " ", text)
+            text = re.sub(r"\s+", " ", text)
+            text = re.sub(r'#', ' ', text)
+            data_dict["text"] = text
+            return data_dict

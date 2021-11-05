@@ -114,3 +114,7 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Run dpr+bm25 for default retrival"}
     )
+    elastic_score: bool = field(
+        default = True,
+        metadata={"help": "whether to score to top_k of each query"}
+    )

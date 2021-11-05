@@ -23,6 +23,7 @@ from datasets import (
 
 import rank_bm25
 from utils.utils_dpr import get_dpr_score
+from utils.preprocess import wiki_preprocess
 
 @contextmanager
 def timer(name):
@@ -109,8 +110,23 @@ class SparseRetrieval:
         """
         self.tokenize_fn = tokenize_fn
         self.data_path = data_path
-        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+        
+        # wiki data 전처리한 파일이 없으면 만들기
+        if context_path == 'mod_wiki.json':
+            if not os.path.isfile("/opt/ml/data/mod_wiki.json") :
+                with open("/opt/ml/data/wikipedia_documents.json", "r") as f:
+                    wiki = json.load(f)
+                wiki_dict = dict()
+                for ids in range(len(wiki)):
+                    # 인덱스 번호가 string type
+                    wiki_dict[str(ids)] = wiki_preprocess(wiki[str(ids)])
+
+                with open('/opt/ml/data/mod_wiki.json', 'w', encoding='utf-8') as mf:
+                    json.dump(wiki_dict, mf, indent="\t", ensure_ascii=False)
+        
+        with open(os.path.join(self.data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
+
 
         self.contexts = list(
             dict.fromkeys([v["text"] for v in wiki.values()])
