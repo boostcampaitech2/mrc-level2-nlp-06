@@ -6,7 +6,7 @@ from typing import List, Callable, NoReturn, NewType, Any
 import dataclasses
 from datasets import load_metric, load_from_disk, Dataset, DatasetDict
 from utils.postprocess import post_processing_fuction_with_setting
-from transformers import XLMRobertaConfig, XLMRobertaForQuestionAnswering, AutoTokenizer
+from transformers import AutoConfig, AutoModelForQuestionAnswering, AutoTokenizer
 
 from transformers import (
     DataCollatorWithPadding,
@@ -47,9 +47,11 @@ def main():
     model_args, data_args, training_args,wandb_args = parser.parse_args_into_dataclasses()
     print(model_args.model_name_or_path)
     # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
-    # training_args.per_device_train_batch_size = 4
+    training_args.per_device_train_batch_size = 12
+    training_args.fp16 = True
     # print(training_args.per_device_train_batch_size)
-    training_args.report_to = ["wandb"]    
+    training_args.report_to = ["wandb"]
+
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")    
     wandb_args= wandb_args_init(wandb_args, model_args)
@@ -77,7 +79,7 @@ def main():
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
     # argument로 원하는 모델 이름을 설정하면 옵션을 바꿀 수 있습니다.
-    config = XLMRobertaConfig.from_pretrained(
+    config = AutoConfig.from_pretrained(
         model_args.config_name
         if model_args.config_name is not None
         else model_args.model_name_or_path,
@@ -91,7 +93,7 @@ def main():
         # rust version이 비교적 속도가 빠릅니다.
         use_fast=True,
     )
-    model = XLMRobertaForQuestionAnswering.from_pretrained(
+    model = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,

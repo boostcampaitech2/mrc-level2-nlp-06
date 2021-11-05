@@ -257,8 +257,8 @@ class DenseRetrieval(SparseRetrieval):
                 result_train.update(result_valid)
                 wandb.log(result_train)
 
-            torch.save(self.p_encoder.state_dict(), f"./outputs/p_encoder_{epoch}.pt")
-            torch.save(self.q_encoder.state_dict(), f"./outputs/q_encoder_{epoch}.pt")
+            torch.save(self.p_encoder.state_dict(), f"./outputs/dpr/p_encoder_{epoch}.pt")
+            torch.save(self.q_encoder.state_dict(), f"./outputs/dpr/q_encoder_{epoch}.pt")
         return self.p_encoder, self.q_encoder
 
     def load_model(self, model_checkpoint, p_path, q_path):

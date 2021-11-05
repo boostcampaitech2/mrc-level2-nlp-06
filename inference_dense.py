@@ -132,10 +132,10 @@ def run_sparse_retrieval(
     retriever = DenseRetrieval(tokenize_fn=tokenize_fn, data_path = data_path, 
                                 context_path = context_path, dataset_path=data_path+"/train_dataset", 
                                 tokenizer=tokenizer, train_data=datasets["validation"], 
-                                is_bm25=data_args.bm25)
+                                num_neg=12, is_bm25=data_args.bm25)
     
     model_checkpoint = "klue/bert-base"
-    retriever.load_model(model_checkpoint, "data/p_encoder_14.pt", "data/q_encoder_14.pt")
+    retriever.load_model(model_checkpoint, "outputs/dpr/p_encoder_14.pt", "outputs/dpr/q_encoder_14.pt")
     #retriever.get_dense_embedding()
     with open("./data/dense_embedding.bin", "rb") as f: # dense_embedding 한번 실행후 진행
         retriever.dense_p_embedding = pickle.load(f)
