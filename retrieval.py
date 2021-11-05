@@ -105,6 +105,9 @@ class SparseRetrieval:
             is_bm25:
                 유사도 랭킹을 bm25로 할것인지 결정합니다.
 
+            use_wiki_preprocessing:
+                wiki documents를 전처리할지 결정합니다.
+
         Summary:
             Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
         """
