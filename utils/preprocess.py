@@ -2,6 +2,7 @@ import json
 import re
 from copy import deepcopy
 
+from utils.augment_data import augmentData
 def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length):        
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -198,6 +199,8 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset =datasets["train"]
+        if data_args.use_augment!=0:
+            train_dataset = augmentData(train_dataset, data_args.use_augment)
         column_names = train_dataset.column_names
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
@@ -223,6 +226,7 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         dataset_list.append(eval_dataset)
     return dataset_list, answer_column_name
 
+<<<<<<< HEAD
 def wiki_preprocess(data_dict):
             text = data_dict["text"]
             text = re.sub(r'\n', ' ', text)
@@ -233,6 +237,8 @@ def wiki_preprocess(data_dict):
             text = re.sub(r'#', ' ', text)
             data_dict["text"] = text
             return data_dict
+=======
+>>>>>>> ec726e10f91e688b7168de36bf93e0371d644ff8
 
 def preprocess_wiki_documents(contexts):
 
@@ -344,4 +350,8 @@ def preprocess_wiki_documents(contexts):
             pop_true = False
 
 
+<<<<<<< HEAD
     return temp_context
+=======
+    return temp_context
+>>>>>>> ec726e10f91e688b7168de36bf93e0371d644ff8

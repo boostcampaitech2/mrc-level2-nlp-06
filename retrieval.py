@@ -25,6 +25,8 @@ import rank_bm25
 from utils.utils_dpr import get_dpr_score
 from utils.preprocess import wiki_preprocess
 
+from utils.preprocess import preprocess_wiki_documents
+
 @contextmanager
 def timer(name):
     t0 = time.time()
@@ -80,6 +82,7 @@ class SparseRetrieval:
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
         is_bm25 = False,
+        use_wiki_preprocessing = False,
         k1=1.5, b=0.75, epsilon=0.25,
         q_encoder = None,
         p_encoder = None
@@ -104,6 +107,9 @@ class SparseRetrieval:
 
             is_bm25:
                 유사도 랭킹을 bm25로 할것인지 결정합니다.
+
+            use_wiki_preprocessing:
+                wiki documents를 전처리할지 결정합니다.
 
         Summary:
             Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
@@ -133,6 +139,10 @@ class SparseRetrieval:
         )  # set 은 매번 순서가 바뀌므로
         print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
+
+        # wiki 전처리
+        if use_wiki_preprocessing:
+            self.contexts = preprocess_wiki_documents(self.contexts)
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
@@ -608,6 +618,7 @@ if __name__ == "__main__":
         "--context_path", metavar="wikipedia_documents", type=str, help=""
     )
     parser.add_argument("--use_faiss", metavar=False, type=bool, help="")
+    parser.add_argument("--use_wiki_preprocessing", metavar=False, type=bool, help="")
 
     args = parser.parse_args()
 
