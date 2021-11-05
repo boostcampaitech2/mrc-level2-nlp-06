@@ -117,8 +117,11 @@ class DataTrainingArguments:
             "help": "Preprocess wiki documents"
         },
     )
-    
+    use_augment: int = field(
+        default=0, metadata={"help": "0->none, 1->why, 2-> how, 3->all"}
+    )
     dpr: bool = field(
         default=True,
         metadata={"help": "Run dpr+bm25 for default retrival"}
     )
+

@@ -2,6 +2,7 @@ import json
 import re
 from copy import deepcopy
 
+from utils.augment_data import augmentData
 def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length):        
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -198,6 +199,8 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset =datasets["train"]
+        if data_args.use_augment!=0:
+            train_dataset = augmentData(train_dataset, data_args.use_augment)
         column_names = train_dataset.column_names
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
