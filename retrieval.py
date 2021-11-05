@@ -135,7 +135,7 @@ class SparseRetrieval:
         # self.contexts = list(
         #     dict.fromkeys([v["text"] for v in wiki.values()])
         # )  # set 은 매번 순서가 바뀌므로
-        self.contexts = load_from_disk("../data/new_wiki")['text']
+        self.contexts = load_from_disk("../data/new_wiki2")['text']
         print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
 
@@ -261,7 +261,7 @@ class SparseRetrieval:
 
         total_score = []
         for idx in range(len(dataset['question'])):
-            total_score.append((dpr_score[idx]*0.1+bm25_score[idx]).tolist())
+            total_score.append((dpr_score[idx]*0.2+bm25_score[idx]).tolist())
         total_score = torch.tensor(np.array(total_score))
         ranks = torch.argsort(total_score, dim=1, descending=True).squeeze()
         context_list = []
