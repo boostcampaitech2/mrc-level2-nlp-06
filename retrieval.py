@@ -53,28 +53,6 @@ def par_score(queries, topk):
 
     return doc_scores, doc_indices
 
-def par_search(queries, topk):
-    # pool.map may put only one argument. We need two arguments: datasets and topk.
-    def wrapper(query): 
-        rel_doc = retriever.get_relevant_doc(query, k = topk)
-        return rel_doc
-
-    pool = Pool()
-
-    pool.restart() 
-
-    rel_docs_score_indices = pool.map(wrapper, queries)
-    pool.close()
-    pool.join()
-
-    doc_scores = []
-    doc_indices = []
-    for s,idx in rel_docs_score_indices:
-        doc_scores.append( s )
-        doc_indices.append( idx )
-
-    return doc_scores, doc_indices
-
 
 
 class MyBm25(rank_bm25.BM25Okapi): # must do like this. Doing "from rank_bm25 import BM250kapi"  
@@ -101,7 +79,9 @@ class SparseRetrieval:
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
         is_bm25 = False,
-        k1=1.5, b=0.75, epsilon=0.25
+        k1=1.5, b=0.75, epsilon=0.25,
+        q_encoder = None,
+        p_encoder = None
     ) -> NoReturn:
 
         """
@@ -153,6 +133,10 @@ class SparseRetrieval:
         self.k1 = k1
         self.b = b
         self.epsilon = epsilon
+
+        #encoder for dpr
+        self.q_encoder = q_encoder
+        self.p_encoder = p_encoder
 
 
     def get_sparse_embedding(self) -> NoReturn:
@@ -248,7 +232,7 @@ class SparseRetrieval:
     def retrieve_dpr(self, dataset, topk: Optional[int] = 20):
         print("dpr mode!")
         tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
-        dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer)
+        dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer,self.p_encoder, self.q_encoder)
 
         bm25_score = []
         for query in dataset['question']:

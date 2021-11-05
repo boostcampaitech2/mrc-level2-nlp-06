@@ -31,6 +31,18 @@ class ModelArguments:
         metadata={"help": "resume checkout"}
     ) 
 
+    dpr_q_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
+    dpr_p_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
 
 @dataclass
 class DataTrainingArguments:

@@ -1,6 +1,7 @@
 from transformers import BertConfig
 from transformers import is_torch_available, PreTrainedTokenizerFast, TrainingArguments,BertPreTrainedModel,BertModel
 import torch
+import os
 
 class BertEncoder(BertPreTrainedModel):
   def __init__(self, config):
@@ -20,11 +21,12 @@ class BertEncoder(BertPreTrainedModel):
       return pooled_output
 
 
-def get_dpr_score(query, contexts, tokenizer):
+def get_dpr_score(query, contexts, tokenizer, p_encoder_path, q_encoder_path):
     p_encoder = BertEncoder.from_pretrained("klue/bert-base")
     q_encoder = BertEncoder.from_pretrained("klue/bert-base")
-    p_encoder.load_state_dict(torch.load("../dpr/best_p_enc_model.pt"))
-    q_encoder.load_state_dict(torch.load("../dpr/best_q_enc_model.pt"))
+
+    p_encoder.load_state_dict(torch.load(p_encoder_path))
+    q_encoder.load_state_dict(torch.load(q_encoder_path))
     if torch.cuda.is_available():
         p_encoder.cuda()
         q_encoder.cuda()
