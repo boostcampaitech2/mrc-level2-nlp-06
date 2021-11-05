@@ -1,4 +1,8 @@
+import json
+import re
+from copy import deepcopy
 
+from utils.augment_data import augmentData
 def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args, max_seq_length):        
     if training_args.do_train:
         column_names = datasets["train"].column_names
@@ -195,6 +199,8 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset =datasets["train"]
+        if data_args.use_augment!=0:
+            train_dataset = augmentData(train_dataset, data_args.use_augment)
         column_names = train_dataset.column_names
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
@@ -220,3 +226,115 @@ def prepare_datasets_with_setting(tokenizer, datasets, training_args, data_args,
         dataset_list.append(eval_dataset)
     return dataset_list, answer_column_name
 
+
+def preprocess_wiki_documents(contexts):
+
+    # preprocessing
+    temp_context = deepcopy(contexts)
+
+    korean = re.compile('[\u3131-\u3163\uac00-\ud7a3]+')
+    pop_true = False
+    for idx in range(len(temp_context)-1, -1, -1):
+        
+        # 한글 없는 context 제거
+        if korean.search(temp_context[idx]) is None:
+            temp_context.pop(idx)
+            pop_true = True
+            
+        # code만 존재하는 context 제거
+        for value in ['<stdio.h>', '<stdint.h>', '<!DOCTYPE html>', '<script>']: 
+            if not pop_true and re.search(value, temp_context[idx]) is not None:
+                temp_context.pop(idx)
+                pop_true = True
+
+        for value in ['범례:']: 
+            if not pop_true and re.search(value, temp_context[idx]) is not None:
+                temp_context.pop(idx)
+                pop_true = True
+        
+        if not pop_true:
+            ## 네모박스 제거
+            temp_context[idx] = re.sub('(\{([^\}]+)\})', ' ', temp_context[idx])
+            
+            ## 한글 없는 문단 또는 문장 제거
+            split_sentences = temp_context[idx].split('\n\n')
+            for se_idx in range(len(split_sentences)-1, -1, -1):
+                split_sentences[se_idx] = split_sentences[se_idx].strip()
+                if korean.search(split_sentences[se_idx]) is None:
+                    split_sentences.pop(se_idx)
+                elif split_sentences[se_idx] == '':
+                    split_sentences.pop(se_idx)
+                else:
+                    split_lines = split_sentences[se_idx].split('. ')
+                    for line_idx in range(len(split_lines)-1, -1, -1):
+                        split_lines[line_idx] = split_lines[line_idx].strip()
+                        if korean.search(split_lines[line_idx]) is None:
+                            split_lines.pop(line_idx)
+                    split_sentences[se_idx] = '. '.join(split_lines)
+            temp_context[idx] = '\n\n'.join(split_sentences)
+            
+
+            ## HTML 태그 제거
+            for value in ['(<Ref([^>]+)>)', '<ref>', '</ref>', '<REF>', '</REF>', '(<ref([^>]+)>)', '/ref>']:
+                temp_context[idx] = re.sub(value, ' ', temp_context[idx])
+
+            for value in ['(<br([^>]+)>)', '<br>', '<br/>', '</br>', '<br />', '<BR>', '<bR>', '<BR />']:
+                temp_context[idx] = re.sub(value, '\n', temp_context[idx])
+                
+            for value in ['<nowiki>', '</nowiki>']:
+                temp_context[idx] = re.sub(value, ' ', temp_context[idx])
+                
+            for value in ['</span>', '</cite>', '</big>', '(<script([^>]+)>)', '(<!DOCTYPE([^>]+)>)']:
+                temp_context[idx] = re.sub(value, ' ', temp_context[idx])
+                
+            for value in ['(<blockquote([^>]+)>)', '<Blockquote>', '</blockquote>']:
+                temp_context[idx] = re.sub(value, ' ', temp_context[idx])
+                
+            for value in ['<HTML>', '<head>', '</var>', '<ol>', '</small>', '</p>', '</sub>']:
+                temp_context[idx] = re.sub(value, ' ', temp_context[idx])
+                
+            ## 특수문자 및 빈 괄호 제거
+            for value in ['★', '▷', '(\(( +)\))']:
+                temp_context[idx] = re.sub(value, '', temp_context[idx])
+
+            ## 불필요한 문자 제거 
+            if re.search('\|w\=[0-9]+', temp_context[idx]) is not None:
+                split_sentences = temp_context[idx].split('\n')
+                for se_idx, sentence in reversed(list(enumerate(split_sentences))):
+                    if re.search('\|w\=[0-9]+', sentence) is not None:
+                        split_sentences.pop(se_idx)
+                temp_context[idx] = '\n'.join(split_sentences)
+        
+            if re.search('\|?pp\=[0-9]+-[0-9]+', temp_context[idx]) is not None:
+                temp_context[idx] = re.sub('\|?pp\=[0-9]+-[0-9]+', '', temp_context[idx])
+            
+            if re.search('\|?p\=[0-9]+-[0-9]+', temp_context[idx]) is not None:
+                temp_context[idx] = re.sub('\|?p\=[0-9]+-[0-9]+', '', temp_context[idx])
+                
+            if re.search('\|?pp\=[0-9]+', temp_context[idx]) is not None:
+                temp_context[idx] = re.sub('\|?pp\=[0-9]+', '', temp_context[idx])
+
+                
+            if re.search('\|?p\=[0-9]+', temp_context[idx]) is not None:
+                temp_context[idx] = re.sub('\|?p\=[0-9]+', '', temp_context[idx])
+
+            
+            ## style 제거
+            if re.search('style', temp_context[idx]) is not None:
+                for value in ['(style\="([^"]+)")', '(border\="[0-9]")', '(width\="([0-9]+%?)")', '(class\="(([a-z]? ?)+([a-z]?))")', '(align\="[a-z]+")', '(bgcolor="\#[A-Z]+")', '(style\=[a-z]+\-align\:[a-z]+)', '(lang\=[a-z]+)', '(rowspan\="[0-9]+")', '(align\=[a-z]+)', '((\*+ +)\n)', '([\|\]\'\s]+\n)']:
+                    temp_context[idx] = re.sub(value, '', temp_context[idx])
+                for value in ['(\|\|)', '(\| +\|)', '(\! +\|)']:
+                    while re.search(value, temp_context[idx]) is not None:
+                        temp_context[idx] = re.sub(value, '|', temp_context[idx])
+                for value in ['(( +)?(\|\-)?( +)?\n)', '(( +)?(\|)?( +)?\n)', '(( +)?(\!)?( +)?\n)']:
+                    temp_context[idx] = re.sub(value, '\n', temp_context[idx])
+                while re.search('\n\n', temp_context[idx]) is not None:
+                    temp_context[idx] = re.sub('\n\n', '\n', temp_context[idx])
+
+            temp_context[idx] = re.sub('  +', ' ', temp_context[idx])
+
+        if pop_true:
+            pop_true = False
+
+
+    return temp_context

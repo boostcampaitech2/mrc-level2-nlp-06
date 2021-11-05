@@ -5,15 +5,15 @@ import faiss
 import pickle
 import numpy as np
 import pandas as pd
-
+from torch.nn.functional import softmax
 from pathos.multiprocessing import ProcessingPool as Pool
 import pathos as pa
 
 from tqdm.auto import tqdm
 from contextlib import contextmanager
 from typing import List, Tuple, NoReturn, Any, Optional, Union
-
-
+from transformers import AutoTokenizer
+import torch
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from datasets import (
@@ -23,6 +23,9 @@ from datasets import (
 )
 
 from bm25 import OurBm25, OurBm25L, OurBm25Plus
+from utils.utils_dpr import get_dpr_score
+
+from utils.preprocess import preprocess_wiki_documents
 
 @contextmanager
 def timer(name):
@@ -39,7 +42,6 @@ def parallel_bm25_search(queries, topk):
     def wrapper(query): 
         rel_doc = retriever.get_relevant_doc(query, k = topk)
         return rel_doc
-
     pool = Pool()
 
     pool.restart() 
@@ -64,7 +66,11 @@ class SparseRetrieval:
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
         bm25_type = None,
-        k1=1.5, b=0.75, epsilon=0.25
+        is_bm25 = False,
+        use_wiki_preprocessing = False,
+        k1=1.5, b=0.75, epsilon=0.25,
+        q_encoder = None,
+        p_encoder = None
     ) -> NoReturn:
 
         """
@@ -87,6 +93,9 @@ class SparseRetrieval:
             bm25_type:
                 유사도 랭킹을 bm25로 할것인지 결정합니다.
 
+            use_wiki_preprocessing:
+                wiki documents를 전처리할지 결정합니다.
+
         Summary:
             Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
         """
@@ -100,6 +109,10 @@ class SparseRetrieval:
         )  # set 은 매번 순서가 바뀌므로
         print(f"Lengths of unique wiki contexts : {len(self.contexts)}")
         self.ids = list(range(len(self.contexts)))
+
+        # wiki 전처리
+        if use_wiki_preprocessing:
+            self.contexts = preprocess_wiki_documents(self.contexts)
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
@@ -116,6 +129,11 @@ class SparseRetrieval:
         self.k1 = k1
         self.b = b
         self.epsilon = epsilon
+
+        #encoder for dpr
+        self.q_encoder = q_encoder
+        self.p_encoder = p_encoder
+
 
     def get_sparse_embedding(self) -> NoReturn:
 
@@ -227,6 +245,54 @@ class SparseRetrieval:
             faiss.write_index(self.indexer, indexer_path)
             print("Faiss Indexer Saved.")
 
+    def retrieve_dpr(self, dataset, topk: Optional[int] = 20):
+        print("dpr mode!")
+        tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
+        dpr_score = get_dpr_score(dataset['question'], self.contexts, tokenizer,self.p_encoder, self.q_encoder)
+
+        bm25_score = []
+        for query in dataset['question']:
+            tok_q = self.tokenize_fn(query)
+            bm25_score.append(self.bm25.get_scores(tok_q))
+        bm25_score = torch.tensor(np.array(bm25_score))
+        dpr_score = softmax(dpr_score,dim=1)
+        bm25_score = softmax(bm25_score,dim=1)
+
+        total_score = []
+        for idx in range(len(dataset['question'])):
+            total_score.append((dpr_score[idx]*0.2+bm25_score[idx]).tolist())
+        total_score = torch.tensor(np.array(total_score))
+        ranks = torch.argsort(total_score, dim=1, descending=True).squeeze()
+        context_list = []
+        for index in range(len(ranks)):
+            k_list = []
+            for i in range(topk):
+                k_list.append(self.contexts[ranks[index][i]])
+            context_list.append(k_list)
+                
+        total = []
+        for idx, example in enumerate(
+            tqdm(dataset, desc="Sparse retrieval: ")
+        ):
+            tmp = {
+                # Query와 해당 id를 반환합니다.
+                "question": example["question"],
+                "id": example["id"],
+                # Retrieve한 Passage의 id, context를 반환합니다.
+                "context_id": ranks[idx][:topk],
+                "context": " ".join(
+                    context_list[idx]
+                ),
+            }
+            # if "context" in example.keys() and "answers" in example.keys():
+            #     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+            #     tmp["original_context"] = example["context"]
+            #     tmp["answers"] = example["answers"]
+            total.append(tmp)
+
+        cqas = pd.DataFrame(total)
+        return cqas
+
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
@@ -326,8 +392,6 @@ class SparseRetrieval:
         else: # Added this branch because parallel processing increases the risk of malfunctioning. 
             raise Exception('The input is neither str, dataset, nor dict.')
 
-
-
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
         """
@@ -363,7 +427,7 @@ class SparseRetrieval:
                 raise Exception("While processing bm25 with parallel serach, input is expected to be a single query, but somethong went wrong. Find this error in get_relevant_doc in retrieval.py")
             doc_score, doc_indices = self.bm25.get_top_n(tok_q, self.contexts, n = k)
             return doc_score, doc_indices
-
+        
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
@@ -545,6 +609,7 @@ if __name__ == "__main__":
         "--context_path", metavar="wikipedia_documents", type=str, help=""
     )
     parser.add_argument("--use_faiss", metavar=False, type=bool, help="")
+    parser.add_argument("--use_wiki_preprocessing", metavar=False, type=bool, help="")
 
     args = parser.parse_args()
 

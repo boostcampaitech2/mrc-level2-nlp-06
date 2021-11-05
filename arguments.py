@@ -9,7 +9,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="klue/bert-base",
+        default="klue/roberta-large",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         },
@@ -31,6 +31,18 @@ class ModelArguments:
         metadata={"help": "resume checkout"}
     ) 
 
+    dpr_q_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
+    dpr_p_encoder_path : Optional[str] = field(
+        default="../dpr/best_p_enc_model.pt",
+        metadata={
+            "help": "Pretrained tokenizer name or path if not the same as model_name"
+        },
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -86,7 +98,7 @@ class DataTrainingArguments:
         default=64, metadata={"help": "Define how many clusters to use for faiss."}
     )
     top_k_retrieval: int = field(
-        default=1,
+        default=20,
         metadata={
             "help": "Define how many top-k passages to retrieve based on similarity."
         },
@@ -107,3 +119,18 @@ class DataTrainingArguments:
     # 2. topk가 10일때 bm25 bert가 제일 좋다.(2)
     # 3. topk가 20일 때 bm25Plus bert가 제일 좋다.(3)
     # 4. topk가 30이상일 때 bm25 bert가 제일 좋다.(2)
+
+    use_wiki_preprocessing: bool = field (
+        default=False,
+        metadata={
+            "help": "Preprocess wiki documents"
+        },
+    )
+    use_augment: int = field(
+        default=0, metadata={"help": "0->none, 1->why, 2-> how, 3->all"}
+    )
+    dpr: bool = field(
+        default=True,
+        metadata={"help": "Run dpr+bm25 for default retrival"}
+    )
+
