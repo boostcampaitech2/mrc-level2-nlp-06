@@ -582,78 +582,91 @@ class SparseRetrieval:
 
         return D.tolist(), I.tolist()
 
+    def topk_experiment(self, topK_list, dataset, datatset_name="train"):
+        """ MRC데이터에 대한 성능을 검증합니다. retrieve를 통한 결과 + acc측정"""
+        result_dict = {}
+        for topK in tqdm(topK_list):
+            result_retriever = self.retrieve(dataset, topk=topK)
+            correct = 0
+            for index in tqdm(range(len(result_retriever)), desc="topk_experiment"):
+                if  result_retriever['original_context'][index][:200] in result_retriever['context'][index]:
+                    correct += 1
+            result_dict[datatset_name + "_topk_" + str(topK)] = correct/len(result_retriever)
+        return result_dict
 
 if __name__ == "__main__":
+   
+    import wandb
+    from arguments import (ModelArguments, DataTrainingArguments)
+    from wandb_arguments import WandBArguments
+    from transformers import HfArgumentParser, set_seed
+    from utils.init_wandb import wandb_args_init
 
-    import argparse
+    wandb.login()
+    print(WandBArguments)
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, WandBArguments))
+    model_args, data_args,wandb_args = parser.parse_args_into_dataclasses()
+    wandb_args= wandb_args_init(wandb_args, model_args)
+    wandb.init(project=wandb_args.project,
+                entity=wandb_args.entity,
+                name=wandb_args.name,
+                tags=wandb_args.tags,
+                group=wandb_args.group,
+                notes=wandb_args.notes)
 
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument(
-        "--dataset_name", metavar="./data/train_dataset", type=str, help=""
-    )
-    parser.add_argument(
-        "--model_name_or_path",
-        metavar="bert-base-multilingual-cased",
-        type=str,
-        help="",
-    )
-    parser.add_argument("--data_path", metavar="./data", type=str, help="")
-    parser.add_argument(
-        "--context_path", metavar="wikipedia_documents", type=str, help=""
-    )
-    parser.add_argument("--use_faiss", metavar=False, type=bool, help="")
-    parser.add_argument("--use_wiki_preprocessing", metavar=False, type=bool, help="")
+    data_path  = "../data/"
+    dataset_path = "../data/train_dataset"
+    context_path = "wikipedia_documents.json"
+    model_checkpoint = "klue/roberta-large"
 
-    args = parser.parse_args()
-
-    # Test sparse
-    org_dataset = load_from_disk(args.dataset_name)
-    full_ds = concatenate_datasets(
-        [
+    org_dataset = load_from_disk(dataset_path)
+    full_ds = concatenate_datasets([
             org_dataset["train"].flatten_indices(),
             org_dataset["validation"].flatten_indices(),
-        ]
-    )  # train dev 를 합친 4192 개 질문에 대해 모두 테스트
-    print("*" * 40, "query dataset", "*" * 40)
-    print(full_ds)
+        ])
+
 
     from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name_or_path,
-        use_fast=False,
-    )
-
+    tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
     retriever = SparseRetrieval(
         tokenize_fn=tokenizer.tokenize,
-        data_path=args.data_path,
-        context_path=args.context_path,
+        data_path=data_path,
+        context_path=context_path,
         is_bm25=True
-    )
+    )    
 
-    query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
+    retriever.get_sparse_embedding()
+    topK_list = [1,10,20,50]
+    result_train = retriever.topk_experiment(topK_list, org_dataset['train'], datatset_name="train")
+    result_valid = retriever.topk_experiment(topK_list, org_dataset['validation'], datatset_name="valid")
+    result_train.update(result_valid)
+    for i in range(15):
+        wandb.log(result_train)
+    wandb.finish()
 
-    if args.use_faiss:
+    # query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
 
-        # test single query
-        with timer("single query by faiss"):
-            scores, indices = retriever.retrieve_faiss(query)
+    # if args.use_faiss:
 
-        # test bulk
-        with timer("bulk query by exhaustive search"):
-            df = retriever.retrieve_faiss(full_ds)
-            df["correct"] = df["original_context"] == df["context"]
+    #     # test single query
+    #     with timer("single query by faiss"):
+    #         scores, indices = retriever.retrieve_faiss(query)
 
-            print("correct retrieval result by faiss", df["correct"].sum() / len(df))
+    #     # test bulk
+    #     with timer("bulk query by exhaustive search"):
+    #         df = retriever.retrieve_faiss(full_ds)
+    #         df["correct"] = df["original_context"] == df["context"]
 
-    else:
-        with timer("bulk query by exhaustive search"):
-            df = retriever.retrieve(full_ds)
-            df["correct"] = df["original_context"] == df["context"]
-            print(
-                "correct retrieval result by exhaustive search",
-                df["correct"].sum() / len(df),
-            )
+    #         print("correct retrieval result by faiss", df["correct"].sum() / len(df))
 
-        with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query)
+    # else:
+    #     with timer("bulk query by exhaustive search"):
+    #         df = retriever.retrieve(full_ds)
+    #         df["correct"] = df["original_context"] == df["context"]
+    #         print(
+    #             "correct retrieval result by exhaustive search",
+    #             df["correct"].sum() / len(df),
+    #         )
+
+    #     with timer("single query by exhaustive search"):
+    #         scores, indices = retriever.retrieve(query)
