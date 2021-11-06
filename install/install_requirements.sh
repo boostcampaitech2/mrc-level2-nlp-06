@@ -14,3 +14,4 @@ pip install pathos
 pip install faiss-gpu
 pip install elasticsearch==7.6.0
 pip install pororo==0.4.2
+pip install kss==3.2.0
