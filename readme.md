@@ -17,8 +17,7 @@ BoostCamp AI Tech - [NLP] ODQA
         <img src="https://img.shields.io/badge/Score (EM)-64.170-bronze"/></a> &nbsp
     </a>
     <a href="https://stackoverflow.com/questions/52229059/em-score-in-squad-challenge">
-        <img src="https://img.shields.io/badge/Score (F1 score)-74.690
--bronze"/></a> &nbsp
+        <img src="https://img.shields.io/badge/Score (F1 score)-74.690-bronze"/></a> &nbsp
     </a>
 </p>
 
@@ -256,11 +255,11 @@ elastic_score: bool = field(
 <br/>
 
 ## 6. Contributors
-나요한_T2073 : https://github.com/nudago
-백재형_T2102 : https://github.com/BaekTree
-송민재_T2116 : https://github.com/Jjackson-dev
-이호영_T2177 : https://github.com/hylee-250
-정찬미_T2207 : https://github.com/ChanMiJung
-한진_T2237 : https://github.com/wlsl8135
-홍석진_T2243 : https://github.com/HongCu
+- 나요한_T2073 : https://github.com/nudago
+- 백재형_T2102 : https://github.com/BaekTree
+- 송민재_T2116 : https://github.com/Jjackson-dev
+- 이호영_T2177 : https://github.com/hylee-250
+- 정찬미_T2207 : https://github.com/ChanMiJung
+- 한진_T2237 : https://github.com/wlsl8135
+- 홍석진_T2243 : https://github.com/HongCu
 
